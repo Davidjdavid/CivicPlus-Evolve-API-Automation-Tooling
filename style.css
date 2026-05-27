@@ -1,0 +1,117 @@
+:root {
+    --primary: #4f46e5;
+    --primary-hover: #4338ca;
+    --success: #10b981;
+    --danger: #ef4444;
+    --dark: #1e293b;
+    --bg: #f8fafc;
+    --card-bg: #ffffff;
+    --text-main: #334155;
+    --text-muted: #64748b;
+    --border: #e2e8f0;
+    --shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+}
+
+body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background-color: var(--bg);
+    color: var(--text-main);
+    display: flex;
+    flex-direction: column; /* Stack instructions on top of dashboard */
+    align-items: center;    /* Center horizontally */
+    padding: 40px 20px;
+    margin: 0;
+    gap: 20px;
+}
+
+#instructions {
+    width: 100%;
+    max-width: 480px;
+    background: #f1f5f9;
+    padding: 16px;
+    border-radius: 12px;
+    border: 1px dashed var(--border);
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+
+#mainDashboard {
+    background: var(--card-bg);
+    padding: 32px;
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    width: 100%;
+    max-width: 480px;
+    border: 1px solid var(--border);
+}
+
+h1 {
+    color: var(--dark);
+    font-size: 1.25rem;
+    margin: 0 0 24px 0;
+    text-align: center;
+}
+
+#inputDiv {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 24px;
+}
+
+#inputDiv label {
+    font-weight: 600;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+#inputDiv input {
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 8px;
+}
+
+/* Remove <br> behavior in flex */
+#inputDiv br { display: none; }
+
+#buttonsDiv {
+    display: grid;
+    grid-template-columns: 1fr 1fr; /* Creates two equal columns */
+    grid-template-rows: auto auto;   /* Creates two rows */
+    gap: 12px;
+}
+
+#uploadBtn { 
+    background-color: var(--primary); 
+    color: white; 
+    margin-top: 0;           /* Remove top margin to keep grid alignment tight */
+}
+
+button {
+    padding: 12px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: white;
+    transition: opacity 0.2s;
+}
+
+/* Map CSS to your actual HTML IDs */
+#apiBtn { background-color: var(--dark); }
+#altBtn { background-color: var(--success); }
+#deleteBtn { background-color: var(--danger); } 
+
+button:hover { opacity: 0.9; }
+button:active { transform: translateY(1px); }
+
+#resultsDiv {
+    margin-top: 24px;
+    padding: 12px;
+    background-color: #f8fafc;
+    border-radius: 6px;
+    border-left: 4px solid var(--primary);
+}

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <link rel="stylesheet" href="/style.css">
+    </head>
+    <body>
+        <div id="instructions">
+            <p><b>Instructions on how to use this tool:</b></p>        
+        </div>
+
+        <div id="mainDashboard">
+            <h1>Upload articles to Evolve site</h1>
+            <div id="inputDiv">
+                <label for="inputURL">Website URL:</label>
+                <input type="text" id="inputURL"><br>
+                
+                <label for="inputToken">Token:</label>
+                <input type="text" id="inputToken" value=""><br>
+            </div>
+
+
+            <div id="buttonsDiv">
+                <button id="uploadBtn">Upload articles</button>
+            </div>
+            <div id="resultsDiv">
+                <p id="results">Results: N/A</p>
+            </div>
+        </div>
+
+        <script>
+            const resultsField = document.getElementById('results');
+
+            // Runs when the upload button is clicked. This should upload the articles to the Evolve site when ran
+            document.getElementById('uploadBtn').onclick = async () => {
+
+                // This "please wait" section lets the user know the program is running. Otherwise they on long upload times they might think its broken or they didnt click the button 
+                resultsField.innerText = 'Please wait...';
+
+                // This variable holds the 
+                const inputValues = {
+                    url: document.getElementById('inputURL').value,
+                    apiKey: document.getElementById('inputToken').value
+                };
+                
+                // Sends the API request info 
+                const response = await fetch('/uploadBtn', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(inputValues) 
+                });
+
+                // If everything goes okay we can display the results
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('results').innerText = data.message;
+                }
+            };
+
+        </script>
+    </body>
+</html>
