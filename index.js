@@ -1,14 +1,10 @@
-// ------------------------------------------------------------------------------
-// VARIABLES AND SET UP
-// ------------------------------------------------------------------------------
-
 const fs = require('node:fs');
 const XLSX = require('xlsx');
 const express = require('express');
 const path = require('node:path');
 
-const workbook = XLSX.readFile("articles.xlsx");
-const firstSheetName = workbook.SheetNames[0];
+const workbook = XLSX.readFile("articles.xlsx"); 
+const firstSheetName = workbook.SheetNames[0]; 
 const worksheet = workbook.Sheets[firstSheetName];
 const excelData = XLSX.utils.sheet_to_json(worksheet);
 
@@ -29,7 +25,7 @@ app.listen(4000, () => {
 
 app.post('/uploadBtn', async (req, res) => {
     const { url, apiKey } = req.body; 
-    
+
     console.log("URL:", url);
     console.log("Token:", apiKey);
 
@@ -41,31 +37,6 @@ app.post('/uploadBtn', async (req, res) => {
         res.status(500).json({ message: "Upload failed. Check server logs." });
     }
 });
-
-// ------------------------------------------------------------------------------
-// FUNCTIONS
-// ------------------------------------------------------------------------------
-
-function parseExcel() {
-    let newFileList = [];
-    for(let entry in excelData) {
-            let newFile = {
-                Title: excelData[entry].Title,
-                ContentType: excelData[entry].ContentType,
-                ContentName: excelData[entry].ContentName,
-                contentTypeDisplayName: excelData[entry].contentTypeDisplayName, 
-                Id: excelData[entry].Id,
-                Content: excelData[entry].Content,
-            }
-            try {
-                newFileList.push(newFile);
-            } 
-            catch(error) {
-                console.log(error);
-            }
-        }
-    return newFileList;
-}
 
 async function uploadArticles(apiURL, accessToken) {
     let excelFiles = parseExcel();
@@ -87,6 +58,14 @@ async function uploadArticles(apiURL, accessToken) {
                 id: excelFiles[excelFile].Id
             }
         };
+
+        if (excelFiles[excelFile].Tags) {
+            requestData.tags = excelFiles[excelFile].Tags;
+        }
+
+        if (excelFiles[excelFile].Categories) {
+            requestData.categories = excelFiles[excelFile].Categories;
+        }
 
         const body = JSON.stringify(requestData);
 
@@ -114,4 +93,36 @@ async function uploadArticles(apiURL, accessToken) {
     }
 
     return await Promise.all(uploadPromises);
+}
+
+function parseExcel() {
+    const workbook = XLSX.readFile("articles.xlsx"); 
+    const firstSheetName = workbook.SheetNames[0]; 
+    const worksheet = workbook.Sheets[firstSheetName];
+    const excelData = XLSX.utils.sheet_to_json(worksheet);
+
+    let newFileList = [];
+    
+    for (let entry of excelData) {
+        let newFile = {
+            Title: entry.Title,
+            ContentType: entry.ContentType,
+            ContentName: entry.ContentName,
+            contentTypeDisplayName: entry.contentTypeDisplayName, 
+            Id: entry.Id,
+            Content: entry.Content,
+            Tags: entry.Tags ? String(entry.Tags).split(',').map(tag => tag.trim()) : undefined,
+            Categories: entry.Categories ? String(entry.Categories).split(',').map(cat => ({
+                id: "51a3131f-eda3-46fb-b4aa-1cc2d2effb81",
+                name: cat.trim()
+            })) : undefined
+        }
+        try {
+            newFileList.push(newFile);
+        } 
+        catch(error) {
+            console.log(error);
+        }
+    }
+    return newFileList;
 }
