@@ -115,3 +115,10 @@ button:active { transform: translateY(1px); }
     border-radius: 6px;
     border-left: 4px solid var(--primary);
 }
+
+/* Add this to your CSS file to give visual feedback when disabled */
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
