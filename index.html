@@ -18,6 +18,85 @@
                 <input type="text" id="inputToken" value=""><br>
             </div>
 
+            <div id="buttonsDiv">
+                <button class="upload-btn" data-endpoint="/upload/articles">Upload articles</button>
+                <button class="upload-btn" data-endpoint="/upload/resources">Upload resources</button>
+                <button class="upload-btn" data-endpoint="/upload/faqs">Upload FAQs</button>
+                <button class="upload-btn" data-endpoint="/upload/staff">Upload staff</button>
+                <button class="upload-btn" data-endpoint="/upload/departments">Upload departments</button>
+                <button class="upload-btn" data-endpoint="/upload/quickLinks">Upload quick links</button>
+                <button class="upload-btn" data-endpoint="/upload/news">Upload news</button>
+                <button class="upload-btn" data-endpoint="/upload/calendar">Upload calendar</button>
+                <button class="upload-btn" data-endpoint="/upload/agendasAndMinutes">Upload agendas and minutes</button>
+                <button class="upload-btn" data-endpoint="/upload/facility">Upload facilities</button>
+            </div>
+            <div id="resultsDiv">
+                <p id="results">Results: N/A</p>
+            </div>
+        </div>
+
+        <script>
+            const resultsField = document.getElementById('results');
+            const inputURL = document.getElementById('inputURL');
+            const inputToken = document.getElementById('inputToken');
+
+            document.querySelectorAll('.upload-btn').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const button = e.target;
+                    const endpoint = button.getAttribute('data-endpoint');
+
+                    button.disabled = true;
+                    resultsField.innerText = 'Please wait...';
+
+                    const inputValues = {
+                        url: inputURL.value,
+                        apiKey: inputToken.value
+                    };
+
+                    try {
+                        const response = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(inputValues) 
+                        });
+
+                        if (response.ok) {
+                            const data = await response.json();
+                            resultsField.innerText = data.message;
+                        } else {
+                            resultsField.innerText = `Error: ${response.statusText}`;
+                        }
+                    } catch (error) {
+                        resultsField.innerText = 'Network error occurred.';
+                    } finally {
+                        setTimeout(() => {
+                            button.disabled = false;
+                        }, 3000);
+                    }
+                });
+            });
+        </script>
+    </body>
+</html><!DOCTYPE html>
+<html>
+    <head>
+        <link rel="stylesheet" href="/style.css">
+    </head>
+    <body>
+        <div id="instructions">
+            <p><b>Instructions on how to use this tool:</b></p>        
+        </div>
+
+        <div id="mainDashboard">
+            <h1>Upload articles to Evolve site</h1>
+            <div id="inputDiv">
+                <label for="inputURL">Website URL:</label>
+                <input type="text" id="inputURL"><br>
+                
+                <label for="inputToken">Token:</label>
+                <input type="text" id="inputToken" value=""><br>
+            </div>
+
 
             <div id="buttonsDiv">
                 <button id="uploadBtn">Upload articles</button>
