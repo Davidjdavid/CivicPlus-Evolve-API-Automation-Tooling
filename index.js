@@ -154,7 +154,16 @@ const uploadConfig = {
     departments: {
         sheetIndex: 4,
         mapPayload: (entry) => ({
-            data: { department: { en: entry.department } },
+            data: { 
+                department: { en: entry.Department }, 
+                phonenumber: { en: entry.PhoneNumber },
+                emergencynumber: { en: entry.EmergencyNumber }, 
+                faxnumber: { en: entry.FaxNumber }, 
+                hoursofoperation: { en: entry.HoursOfOperation },
+                additionalinformation: { en: entry.AdditionalInformation },
+                parentdepartment: { iv: [] }, //FIX LATER
+                staffdirectory: { iv: [] }, //FIX LATER
+            },            
             permissionSet: { id: entry.Id },
             tags: parseTags(entry.Tags),
             categories: parseCategories(entry.Categories, "51a3131f-eda3-46fb-b4aa-1cc2d2effb81")
@@ -172,7 +181,15 @@ const uploadConfig = {
     news: {
         sheetIndex: 6,
         mapPayload: (entry) => ({
-            data: { newstitle: { en: entry.NewsTitle } },
+            data: { 
+                newstitle: { en: entry.NewsTitle },
+                newsdate: { iv: {
+                    startDate: "2019-08-24T14:15:22Z",
+                    endDate: "2019-09-24T14:15:22Z"
+                } }, //FIX LATER
+                newstext: { en: entry.NewsText },
+                newsasset: { iv: [] }, //FIX LATER
+            },             
             permissionSet: { id: entry.Id },
             tags: parseTags(entry.Tags),
             categories: parseCategories(entry.Categories, "51a3131f-eda3-46fb-b4aa-1cc2d2effb81")
@@ -181,7 +198,17 @@ const uploadConfig = {
     calendar: {
         sheetIndex: 7,
         mapPayload: (entry) => ({
-            data: { "name-of-event": { iv: entry.TitleOfEvent } },
+            data: { 
+                "name-of-event": { iv: entry.TitleOfEvent },
+                TimeTest: { iv: entry.TimeTest },
+                "date-of-event": { iv: entry.DateOfEvent }, 
+                "start-time-of-event": { iv: entry.StartTimeOfEvent }, 
+                details: { iv: entry.Details },
+                attachments: { iv: [] }, //FIX LATER
+                "url-link": { iv: "test.com" }, //FIX LATER
+                "submission-pdf": { iv: [] }, //FIX LATER
+
+            },       
             permissionSet: { id: entry.Id },
             tags: parseTags(entry.Tags),
             categories: parseCategories(entry.Categories, "51a3131f-eda3-46fb-b4aa-1cc2d2effb81")
