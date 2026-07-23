@@ -5,7 +5,7 @@ A local Node.js tool with a small web GUI for bulk-importing website content int
 ## What it does
 
 1. You prep an Excel workbook (`EvolveUploads.xlsx`) with one sheet per content type.
-2. Start the local server (`node index.js`, or the included `.bat` on Windows) — it serves a simple dashboard at `http://localhost:4000`.
+2. Start the local server (`node index.js`, or the included `.bat` on Windows), it serves a simple dashboard at `http://localhost:4000`.
 3. Enter the target Evolve site's API URL and an access token, then click the button for the content type you want to upload.
 4. The server reads the matching sheet from the workbook, maps each row into the JSON payload shape the Evolve API expects, and POSTs the records to the site in batches of 10, reporting how many were processed.
 
