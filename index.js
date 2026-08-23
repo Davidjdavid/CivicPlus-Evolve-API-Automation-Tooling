@@ -10,32 +10,76 @@ app.use(express.json());
 app.get('/style.css', (req, res) => res.sendFile(path.join(__dirname, 'style.css')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
-app.listen(4000, () => console.log('Server running at http://localhost:4000'));
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
 // --- Helper Functions ---
 
+const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const parseTags = (tags) => tags ? String(tags).split(',').map(tag => tag.trim()) : undefined;
-const parseCategories = (categories, defaultId) => categories ? String(categories).split(',').map(cat => ({ id: defaultId, name: cat.trim() })) : undefined;
 
-// --- Entity Configuration Dictionary ---
-// Add new upload types here instead of creating new routes/functions.
+// Resolve a name (from the spreadsheet) to an id using a name->id lookup Map.
+// Falls back to the raw value if it already looks like a GUID, so a sheet can
+// mix plain names and raw IDs. Returns undefined (and warns) if nothing matches.
+const resolveId = (value, lookup, label = 'value') => {
+    const name = String(value ?? '').trim();
+    if (!name) return undefined;
 
+    const match = lookup?.get(name.toLowerCase());
+    if (match) return match;
+
+    if (GUID_REGEX.test(name)) return name; // already an id, use as-is
+    console.warn(`No ${label} match for "${name}" — id left empty.`);
+    return undefined;
+};
+
+// Categories can be a comma-separated list of names; map each to { id, name }.
+const parseCategories = (categories, lookup) => categories
+    ? String(categories).split(',')
+        .map(cat => cat.trim())
+        .filter(Boolean)
+        .map(name => ({ id: resolveId(name, lookup, 'category'), name }))
+    : undefined;
+
+// Every sheet carries a PermissionSet NAME column (no id columns anymore),
+// so permissionSet is resolved the same way for every content type.
+const permissionSetByName = (entry, lookups) => ({
+    id: resolveId(entry.PermissionSet, lookups.permissionSet, 'permissionSet'),
+    name: entry.PermissionSet
+});
+
+// Reference lists pulled from /api/apps/<site>/<endpoint> for EVERY type. Names
+// in each sheet's PermissionSet / Categories columns are matched against these
+// to fill in ids. A type can override this (e.g. `referenceData: []` to skip),
+// but by default every type loads both lists so a new sheet "just works".
+const DEFAULT_REFERENCE_DATA = ["permissionSet", "categories"];
+
+// Each config maps a sheet to an endpoint + payload shape. `standardColumns`
+// lists the columns the mapper already handles; ANY column not in that list is
+// auto-injected into `data` as a custom field (see processUpload). So the only
+// columns to leave OUT are the genuine custom/extra ones for that sheet.
 const uploadConfig = {
     articles: {
         sheetIndex: 0,
-        mapPayload: (entry) => ({
+        endpoint: "article",
+        standardColumns: ["Title", "ContentType", "ContentName", "Content", "Publish", "PermissionSet", "Categories", "Tags", "Name"], // leaves TestName as a custom field
+        mapPayload: (entry, lookups) => ({
             data: { name: { en: entry.Title }, article: { en: entry.Content } },
             contentTypeName: entry.ContentType,
             contentTypeDisplayName: entry.contentTypeDisplayName,
-            permissionSet: { id: entry.Id },
+            permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
-            categories: parseCategories(entry.Categories, "51a3131f-eda3-46fb-b4aa-1cc2d2effb81")
+            categories: parseCategories(entry.Categories, lookups.categories),
+            publish: entry.Publish
         })
     },
     resources: {
         sheetIndex: 1,
-        mapPayload: (entry) => ({
-            data: { 
+        endpoint: "resourcedirectory",
+        standardColumns: ["Department", "MaskedEmail", "PhoneNumber", "AdditionalNumber", "FaxNumber", "Address1", "Address2", "City", "State", "Zip", "Latitude", "Longitude", "HoursOfOperation", "AdditionalInformation", "Name", "Email", "Fax", "Hours", "WebsiteUrl", "WebsiteDisplayName", "Description", "Publish", "UserName", "PermissionSet", "Categories"], // leaves Ack as a custom field
+        mapPayload: (entry, lookups) => ({
+            data: {
                 department: { en: entry.Department },
                 maskedemail: { en: entry.MaskedEmail },
                 phonenumber: { en: entry.PhoneNumber },
@@ -116,72 +160,89 @@ const uploadConfig = {
                 },
                 Description: { en: entry.Description }
             },
-            permissionSet: { id: entry.Id },
+            permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
-            categories: parseCategories(entry.Categories, "51a3131f-eda3-46fb-b4aa-1cc2d2effb81")
+            categories: parseCategories(entry.Categories, lookups.categories),
+            publish: entry.Publish
         })
     },
     faqs: {
         sheetIndex: 2,
-        mapPayload: (entry) => ({
-            data: { 
-                question: { en: entry.Question }, 
-                answer: { en: entry.Answer } 
+        endpoint: "faq",
+        standardColumns: ["Question", "Answer", "PermissionSet", "Categories", "Publish", "Name"],
+        mapPayload: (entry, lookups) => ({
+            data: {
+                question: { en: entry.Question },
+                answer: { en: entry.Answer }
             },
-            permissionSet: { id: entry.Id },
+            permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
-            categories: parseCategories(entry.Categories, "517621b0-bb58-4e34-ba0f-b6c15b1b0f66")
+            categories: parseCategories(entry.Categories, lookups.categories),
+            publish: entry.Publish
         })
     },
     staff: {
         sheetIndex: 3,
-        mapPayload: (entry) => ({
-            data: { 
-                firstname: { en: entry.FirstName }, 
+        endpoint: "enhancedemployee",
+        standardColumns: ["PermissionSet", "Categories", "FirstName", "LastName", "Title", "Department", "PhoneNumber", "FaxNumber", "EmailAddress", "Biography", "Publish", "Name"], // leaves `new` as a custom field
+        mapPayload: (entry, lookups) => ({
+            data: {
+                firstname: { en: entry.FirstName },
                 lastname: { en: entry.LastName },
-                title: { en: entry.Title }, 
+                title: { en: entry.Title },
                 department: { en: [] }, //FIX LATER
-                phonenumber: { en: entry.PhoneNumber }, 
+                phonenumber: { en: entry.PhoneNumber },
                 faxnumber: { en: entry.FaxNumber },
-                emailaddress: { en: entry.EmailAddress }, 
+                emailaddress: { en: entry.EmailAddress },
                 Biography: { en: entry.Biography },
             },
-            permissionSet: { id: entry.Id },
+            permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
-            categories: parseCategories(entry.Categories, "51a3131f-eda3-46fb-b4aa-1cc2d2effb81")
+            categories: parseCategories(entry.Categories, lookups.categories),
+            publish: entry.Publish
         })
     },
     departments: {
         sheetIndex: 4,
-        mapPayload: (entry) => ({
-            data: { 
-                department: { en: entry.Department }, 
+        endpoint: "enhanceddepartment",
+        standardColumns: ["Department", "PhoneNumber", "EmergencyNumber", "FaxNumber", "HoursOfOperation", "AdditionalInformation", "ParentDepartment", "StaffDirectory", "Publish", "Name", "PermissionSet", "Categories"],
+        mapPayload: (entry, lookups) => ({
+            data: {
+                department: { en: entry.Department },
                 phonenumber: { en: entry.PhoneNumber },
-                emergencynumber: { en: entry.EmergencyNumber }, 
-                faxnumber: { en: entry.FaxNumber }, 
+                emergencynumber: { en: entry.EmergencyNumber },
+                faxnumber: { en: entry.FaxNumber },
                 hoursofoperation: { en: entry.HoursOfOperation },
                 additionalinformation: { en: entry.AdditionalInformation },
                 parentdepartment: { iv: [] }, //FIX LATER
                 staffdirectory: { iv: [] }, //FIX LATER
-            },            
-            permissionSet: { id: entry.Id },
+            },
+            permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
-            categories: parseCategories(entry.Categories, "51a3131f-eda3-46fb-b4aa-1cc2d2effb81")
+            categories: parseCategories(entry.Categories, lookups.categories),
+            publish: entry.Publish
         })
     },
     quicklinks: {
         sheetIndex: 5,
-        mapPayload: (entry) => ({
-            data: { link: { en: entry.Link } },
-            permissionSet: { id: entry.Id },
+        endpoint: "bpquicklink",
+        standardColumns: ["Link", "Publish", "Name", "PermissionSet", "Categories"],
+        mapPayload: (entry, lookups) => ({
+            data: {
+                link: { en: entry.Link }
+            },
+            permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
-            categories: parseCategories(entry.Categories, "51a3131f-eda3-46fb-b4aa-1cc2d2effb81")
+            categories: parseCategories(entry.Categories, lookups.categories),
+            publish: entry.Publish
         })
     },
     news: {
         sheetIndex: 6,
-        mapPayload: (entry) => ({
-            data: { 
+        endpoint: "newsflash",
+        standardColumns: ["NewsTitle", "NewsDate", "NewsText", "NewsAsset", "Publish", "Name", "PermissionSet", "Categories"],
+        mapPayload: (entry, lookups) => ({
+            data: {
                 newstitle: { en: entry.NewsTitle },
                 newsdate: { iv: {
                     startDate: "2019-08-24T14:15:22Z",
@@ -189,50 +250,60 @@ const uploadConfig = {
                 } }, //FIX LATER
                 newstext: { en: entry.NewsText },
                 newsasset: { iv: [] }, //FIX LATER
-            },             
-            permissionSet: { id: entry.Id },
+            },
+            permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
-            categories: parseCategories(entry.Categories, "51a3131f-eda3-46fb-b4aa-1cc2d2effb81")
+            categories: parseCategories(entry.Categories, lookups.categories),
+            publish: entry.Publish
         })
     },
     calendar: {
         sheetIndex: 7,
-        mapPayload: (entry) => ({
-            data: { 
+        endpoint: "event",
+        standardColumns: ["TitleOfEvent", "TimeTest", "DateOfEvent", "StartTimeOfEvent", "Details", "Attachments", "UrlLink", "SubmissionPDF", "Publish", "Name", "PermissionSet", "Categories"],
+        mapPayload: (entry, lookups) => ({
+            data: {
                 "name-of-event": { iv: entry.TitleOfEvent },
                 TimeTest: { iv: entry.TimeTest },
-                "date-of-event": { iv: entry.DateOfEvent }, 
-                "start-time-of-event": { iv: entry.StartTimeOfEvent }, 
+                "date-of-event": { iv: entry.DateOfEvent },
+                "start-time-of-event": { iv: entry.StartTimeOfEvent },
                 details: { iv: entry.Details },
                 attachments: { iv: [] }, //FIX LATER
                 "url-link": { iv: "test.com" }, //FIX LATER
                 "submission-pdf": { iv: [] }, //FIX LATER
 
-            },       
-            permissionSet: { id: entry.Id },
+            },
+            permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
-            categories: parseCategories(entry.Categories, "51a3131f-eda3-46fb-b4aa-1cc2d2effb81")
+            categories: parseCategories(entry.Categories, lookups.categories),
+            publish: entry.Publish
         })
     },
     agendas: {
         sheetIndex: 8,
-        mapPayload: (entry) => ({
-            data: { department: { en: entry.department } },
-            permissionSet: { id: entry.Id },
+        endpoint: "gh-agenda",
+        standardColumns: ["Publish", "Name", "PermissionSet", "Categories"],
+        mapPayload: (entry, lookups) => ({
+            data: {}, //FIX LATER: the Agendas and Minutes sheet has no content columns yet
+            permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
-            categories: parseCategories(entry.Categories, "51a3131f-eda3-46fb-b4aa-1cc2d2effb81")
+            categories: parseCategories(entry.Categories, lookups.categories),
+            publish: entry.Publish
         })
     },
     facility: {
         sheetIndex: 9,
-        mapPayload: (entry) => ({
+        endpoint: "facility",
+        standardColumns: ["FacilityName", "Publish", "Name", "PermissionSet", "Categories"],
+        mapPayload: (entry, lookups) => ({
             data: { facilityname: { en: entry.FacilityName } },
-            permissionSet: { id: entry.Id },
+            permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
-            categories: parseCategories(entry.Categories, "51a3131f-eda3-46fb-b4aa-1cc2d2effb81")
+            categories: parseCategories(entry.Categories, lookups.categories),
+            publish: entry.Publish
         })
     }
-};
+}
 
 // --- Single Dynamic Route ---
 
@@ -255,27 +326,73 @@ app.post('/upload/:type', async (req, res) => {
     }
 });
 
+
+// --- Reference Data Loader ---
+
+// GET https://content.civicplus.com/api/apps/<site>/<endpoint>
+// Returns a Map of lowercased name -> id for quick matching.
+async function fetchReferenceData(siteURL, endpoint, accessToken) {
+    const apiURL = `https://content.civicplus.com/api/apps/${siteURL}/${endpoint}`;
+
+    const response = await fetch(apiURL, {
+        method: 'GET',
+        headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+        }
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to load ${endpoint}: HTTP ${response.status}: ${await response.text()}`);
+    }
+
+    const json = await response.json();
+    const lookup = new Map();
+
+    (json.items || []).forEach(item => {
+        if (item?.name) lookup.set(String(item.name).trim().toLowerCase(), item.id);
+    });
+
+    console.log(`Loaded ${lookup.size} ${endpoint} entries for ${siteURL}`);
+    return lookup;
+}
+
+
 // --- Generic Engine ---
 
-async function processUpload(type, apiURL, accessToken, batchSize = 10) {
-    const config = uploadConfig[type];
+async function processUpload(type, siteURL, accessToken, batchSize = 10) {
     
-    // Parse Excel
+    const config = uploadConfig[type];
+    let apiURL = `https://content.civicplus.com/api/content/${siteURL}/${config.endpoint}`;
+    
     const workbook = XLSX.readFile("EvolveUploads.xlsx");
     const sheetName = workbook.SheetNames[config.sheetIndex];
     const excelData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
+    // Load every reference list this type needs, once, before uploading.
+    // Defaults to permissionSet + categories for every type (see DEFAULT_REFERENCE_DATA).
+    // lookups ends up like { permissionSet: Map, categories: Map }.
+    const lookups = {};
+    for (const endpoint of (config.referenceData || DEFAULT_REFERENCE_DATA)) {
+        lookups[endpoint] = await fetchReferenceData(siteURL, endpoint, accessToken);
+    }
+
     let executionResults = [];
 
-    // Batch & Upload
     for (let i = 0; i < excelData.length; i += batchSize) {
         const batch = excelData.slice(i, i + batchSize);
         console.log(`Processing batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(excelData.length / batchSize)}`);
 
         const batchPromises = batch.map(entry => {
-            // JSON.stringify automatically drops keys where the value is undefined (e.g., missing tags)
-            const requestData = config.mapPayload(entry);
+            const requestData = config.mapPayload(entry, lookups);
 
+            // --- DYNAMIC EXTRA FIELD INJECTION ---
+            Object.keys(entry).forEach(key => {
+                if (config.standardColumns && !config.standardColumns.includes(key)) {
+                    // Based on your schema, wrapped in { iv: ... } or { en: ... }
+                    requestData.data[key] = { iv: entry[key] }; 
+                }
+            });
             return fetch(apiURL, {
                 method: 'POST',
                 headers: {
@@ -291,8 +408,31 @@ async function processUpload(type, apiURL, accessToken, batchSize = 10) {
                 }
                 return response.json();
             })
-            .then(data => {
+            .then(async data => {
                 console.log(data);
+
+                if (entry.Publish === 'Yes') {
+                    const patchUrl = `https://content.civicplus.com/api/content/${siteURL}/${config.endpoint}/${data.id}/status/?=`;
+                    try {
+                        const patchRes = await fetch(patchUrl, {
+                            method: 'PUT',
+                            headers: {
+                                'Authorization': `Bearer ${accessToken}`,
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({ status: "Published" })
+                        });
+                        
+                        if (!patchRes.ok) {
+                            console.error(`Publish failed for ${data.id}:`, await patchRes.text());
+                        } else {
+                            console.log(`Successfully published ${data.id}`);
+                        }
+                    } catch (err) {
+                        console.error(`Network error publishing ${data.id}:`, err);
+                    }
+                }
+
                 return data;
             })
             .catch(error => {
