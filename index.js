@@ -2,10 +2,23 @@ const fs = require('node:fs');
 const XLSX = require('xlsx');
 const express = require('express');
 const path = require('node:path');
+const multer = require('multer');
 const { title } = require('node:process');
 
 const app = express();
 app.use(express.json());
+
+// Excel files are received in memory (never written to disk) and parsed
+// straight from the buffer. 25 MB cap + a light filter for spreadsheet types.
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 25 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        const ok = /\.(xlsx|xlsm|xls|csv)$/i.test(file.originalname);
+        cb(ok ? null : new Error('Please upload a .xlsx, .xlsm, .xls or .csv file.'), ok);
+    }
+});
+const uploadSingle = upload.single('file');
 
 app.get('/style.css', (req, res) => res.sendFile(path.join(__dirname, 'style.css')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
@@ -307,23 +320,38 @@ const uploadConfig = {
 
 // --- Single Dynamic Route ---
 
-app.post('/upload/:type', async (req, res) => {
-    const { url, apiKey } = req.body;
-    const { type } = req.params;
+// The Excel file arrives as multipart/form-data under the field name "file".
+// url + apiKey travel as ordinary text fields alongside it (req.body).
+app.post('/upload/:type', (req, res) => {
+    uploadSingle(req, res, async (uploadErr) => {
+        // multer errors (wrong type, file too large, etc.) surface here.
+        if (uploadErr) {
+            return res.status(400).json({ message: uploadErr.message });
+        }
 
-    if (!uploadConfig[type]) {
-        return res.status(400).json({ message: `Invalid upload type: ${type}` });
-    }
+        const { url, apiKey } = req.body;
+        const { type } = req.params;
 
-    console.log(`Processing [${type}] - URL: ${url}`);
+        if (!uploadConfig[type]) {
+            return res.status(400).json({ message: `Invalid upload type: ${type}` });
+        }
 
-    try {
-        const executionResults = await processUpload(type, url, apiKey, 10);
-        res.json({ message: `Upload complete. Processed ${executionResults.length} ${type}.` });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: "Upload failed. Check server logs." });
-    }
+        if (!req.file) {
+            return res.status(400).json({ message: 'No Excel file uploaded. Choose a file and try again.' });
+        }
+
+        console.log(`Processing [${type}] - URL: ${url} - file: ${req.file.originalname}`);
+
+        try {
+            // Parse the workbook straight from the uploaded buffer (no disk read).
+            const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+            const executionResults = await processUpload(type, url, apiKey, workbook, 10);
+            res.json({ message: `Upload complete. Processed ${executionResults.length} ${type}.` });
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ message: error.message || "Upload failed. Check server logs." });
+        }
+    });
 });
 
 
@@ -360,13 +388,17 @@ async function fetchReferenceData(siteURL, endpoint, accessToken) {
 
 // --- Generic Engine ---
 
-async function processUpload(type, siteURL, accessToken, batchSize = 10) {
-    
+async function processUpload(type, siteURL, accessToken, workbook, batchSize = 10) {
+
     const config = uploadConfig[type];
     let apiURL = `https://content.civicplus.com/api/content/${siteURL}/${config.endpoint}`;
-    
-    const workbook = XLSX.readFile("EvolveUploads.xlsx");
+
+    // Workbook now comes from the uploaded file (parsed in the route handler)
+    // instead of a hardcoded EvolveUploads.xlsx on the server.
     const sheetName = workbook.SheetNames[config.sheetIndex];
+    if (!sheetName) {
+        throw new Error(`The uploaded workbook has no sheet at index ${config.sheetIndex} for "${type}". It has ${workbook.SheetNames.length} sheet(s): ${workbook.SheetNames.join(', ')}.`);
+    }
     const excelData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
     // Load every reference list this type needs, once, before uploading.
@@ -390,7 +422,7 @@ async function processUpload(type, siteURL, accessToken, batchSize = 10) {
             Object.keys(entry).forEach(key => {
                 if (config.standardColumns && !config.standardColumns.includes(key)) {
                     // Based on your schema, wrapped in { iv: ... } or { en: ... }
-                    requestData.data[key] = { iv: entry[key] }; 
+                    requestData.data[key] = { iv: entry[key] };
                 }
             });
             return fetch(apiURL, {
@@ -422,7 +454,7 @@ async function processUpload(type, siteURL, accessToken, batchSize = 10) {
                             },
                             body: JSON.stringify({ status: "Published" })
                         });
-                        
+
                         if (!patchRes.ok) {
                             console.error(`Publish failed for ${data.id}:`, await patchRes.text());
                         } else {
