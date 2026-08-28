@@ -5,17 +5,24 @@
     </head>
     <body>
         <div id="instructions">
-            <p><b>Instructions on how to use this tool:</b></p>        
+            <p><b>Instructions on how to use this tool:</b></p>
+            <ol>
+                <li>Enter the Evolve site URL and your API token.</li>
+                <li>Choose the Excel workbook (.xlsx) that holds your content — one sheet per content type, in the expected order.</li>
+                <li>Click the button for the content type you want to upload. The matching sheet from the file you selected is parsed and uploaded.</li>
+            </ol>
         </div>
 
         <div id="mainDashboard">
-            <h1>Upload articles to Evolve site</h1>
+            <h1>Upload content to Evolve site</h1>
             <div id="inputDiv">
                 <label for="inputURL">Website URL:</label>
                 <input type="text" id="inputURL"><br>
-                
                 <label for="inputToken">Token:</label>
                 <input type="text" id="inputToken" value=""><br>
+                <label for="inputFile">Excel file:</label>
+                <input type="file" id="inputFile" accept=".xlsx,.xlsm,.xls,.csv"><br>
+                <span id="fileName"></span>
             </div>
 
             <div id="buttonsDiv">
@@ -39,32 +46,56 @@
             const resultsField = document.getElementById('results');
             const inputURL = document.getElementById('inputURL');
             const inputToken = document.getElementById('inputToken');
+            const inputFile = document.getElementById('inputFile');
+            const fileName = document.getElementById('fileName');
+
+            // Show the chosen file name for a bit of feedback.
+            inputFile.addEventListener('change', () => {
+                fileName.innerText = inputFile.files.length
+                    ? `Selected: ${inputFile.files[0].name}`
+                    : '';
+            });
 
             document.querySelectorAll('.upload-btn').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
                     const button = e.target;
                     const endpoint = button.getAttribute('data-endpoint');
 
+                    // A file must be selected before we can upload anything.
+                    if (!inputFile.files.length) {
+                        resultsField.innerText = 'Please choose an Excel file first.';
+                        return;
+                    }
+
                     button.disabled = true;
                     resultsField.innerText = 'Please wait...';
 
-                    const inputValues = {
-                        url: inputURL.value,
-                        apiKey: inputToken.value
-                    };
+                    // Send the file + url + token as multipart/form-data so the
+                    // server (multer) can read the workbook from the request.
+                    const formData = new FormData();
+                    formData.append('file', inputFile.files[0]);
+                    formData.append('url', inputURL.value);
+                    formData.append('apiKey', inputToken.value);
 
                     try {
                         const response = await fetch(endpoint, {
                             method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(inputValues) 
+                            // NOTE: do NOT set Content-Type here — the browser adds
+                            // the correct multipart boundary automatically.
+                            body: formData
                         });
 
                         if (response.ok) {
                             const data = await response.json();
                             resultsField.innerText = data.message;
                         } else {
-                            resultsField.innerText = `Error: ${response.statusText}`;
+                            // Try to surface the server's JSON message, fall back to statusText.
+                            let message = response.statusText;
+                            try {
+                                const errData = await response.json();
+                                if (errData && errData.message) message = errData.message;
+                            } catch (_) { /* response wasn't JSON */ }
+                            resultsField.innerText = `Error: ${message}`;
                         }
                     } catch (error) {
                         resultsField.innerText = 'Network error occurred.';
