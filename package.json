@@ -1,0 +1,17 @@
+{
+  "name": "evolve-content-uploader",
+  "version": "1.0.0",
+  "description": "Upload spreadsheet content to CivicPlus/Evolve sites, one sheet per content type.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "xlsx": "^0.18.5"
+  }
+}
