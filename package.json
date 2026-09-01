@@ -1,9 +1,0 @@
-{
-    "name": "evolve-uploads",
-    "version": "1.0.0",
-    "main": "app.js",
-    "dependencies": {
-        "express": "^4.19.2",
-        "xlsx": "^0.18.5"
-    }
-}
