@@ -1,9 +1,7 @@
-const fs = require('node:fs');
 const XLSX = require('xlsx');
 const express = require('express');
 const path = require('node:path');
 const multer = require('multer');
-const { title } = require('node:process');
 
 const app = express();
 app.use(express.json());
@@ -20,11 +18,21 @@ const upload = multer({
 });
 const uploadSingle = upload.single('file');
 
+// Documents/images for the assets endpoint: any file type, many at once (a
+// whole folder), no extension filter. Memory storage like everything else
+// here — fine for a folder of normal-sized documents, but note every file in
+// the request is buffered in RAM at once, so an extremely large folder could
+// need a streaming approach instead.
+const uploadAssetFiles = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 50 * 1024 * 1024, files: 200 }
+}).array('files', 200);
+
 app.get('/style.css', (req, res) => res.sendFile(path.join(__dirname, 'style.css')));
+app.get('/civicplus-mark.png', (req, res) => res.sendFile(path.join(__dirname, 'civicplus-mark.png')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 
 // --- Helper Functions ---
 
@@ -62,6 +70,139 @@ const permissionSetByName = (entry, lookups) => ({
     name: entry.PermissionSet
 });
 
+// --- Endpoint (schema slug) resolution helpers ---
+//
+// The same content type is spelled differently per site: staff might be
+// "employee", "enhanced-employee" or "enhancedemployee". Rather than hardcode
+// one slug, each config lists the slugs it could be and we pick the one that
+// actually exists on the target site (from /schemas). Punctuation/casing
+// variants are matched automatically, so you only ever list genuinely different
+// WORDS in the candidate array.
+
+// Loose comparison used for BOTH slugs and field names: lowercase and strip
+// everything but a-z/0-9, so "enhanced-employee"/"enhancedEmployee" collapse to
+// one key, and "faxNumber"/"fax_number" do too. Per-site punctuation/casing
+// stops mattering; you only list genuinely different WORDS.
+const normalizeSlug = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// A type may list several candidate slugs (order = preference).
+// Back-compat: a single `endpoint: "..."` string still works.
+const getEndpointCandidates = (config) =>
+    config.endpoints?.length ? config.endpoints
+    : config.endpoint ? [config.endpoint]
+    : [];
+
+// Pick the real slug for THIS site from the schemas that actually exist.
+// Exact match wins; otherwise fall back to a normalized match. Returns the
+// slug as the site spells it, or null if none of the candidates exist. Only
+// ever looks up OUR candidate keys in the schema set — it never scans for
+// substrings, so it can't silently grab an unrelated schema.
+function resolveEndpoint(candidates, schemaNames) {
+    for (const c of candidates) {
+        if (schemaNames.includes(c)) return c;            // exact
+    }
+    const byNorm = new Map(schemaNames.map(n => [normalizeSlug(n), n]));
+    for (const c of candidates) {
+        const hit = byNorm.get(normalizeSlug(c));         // ignore dashes/case
+        if (hit) return hit;
+    }
+    return null;
+}
+
+// For error messages ONLY: schemas whose name looks related to what we wanted,
+// so a brand-new variant tells you exactly what to add to endpoints[]. This is
+// the only place substring matching happens, and it never picks anything — it
+// just builds a helpful hint.
+function suggestClosestSchemas(candidates, schemaNames, limit = 6) {
+    const cores = candidates.map(normalizeSlug);
+    return schemaNames
+        .map(name => {
+            const n = normalizeSlug(name);
+            let score = 0;
+            for (const core of cores) {
+                if (n.includes(core) || core.includes(n)) {
+                    score = Math.max(score, Math.min(n.length, core.length));
+                }
+            }
+            return { name, score };
+        })
+        .filter(s => s.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit)
+        .map(s => s.name);
+}
+
+// --- Field-name resolution helpers ---
+//
+// Same idea as endpoints, one level deeper: the SAME logical field is named
+// differently per site (departments' fax number is "faxnumber" on one site and
+// "fax" on another). Each config can declare `fieldAliases`, mapping the name
+// the mapper emits to the alternate names other sites use. At upload time we
+// read the resolved schema's real field names and rename each data key to
+// whatever THIS site actually has. Punctuation/casing variants are matched
+// automatically (same normalizeSlug as endpoints), so you only list genuinely
+// different WORDS.
+
+// Candidate field names for a data key = the key itself, then its declared alts.
+const getFieldCandidates = (config, key) =>
+    [key, ...((config.fieldAliases && config.fieldAliases[key]) || [])];
+
+// Pick the real field descriptor for THIS site from the schema's field map
+// (keyed by normalized name). Returns { name, partitioning } or null.
+function resolveField(candidates, fieldMap) {
+    for (const c of candidates) {
+        const hit = fieldMap.get(normalizeSlug(c));
+        if (hit) return hit;
+    }
+    return null;
+}
+
+// Re-wrap a single-partition value under the partition the schema expects.
+// { en: X } <-> { iv: X } only; multi-key or non-standard wrappers are left
+// alone so complex/localized fields are never mangled.
+function conformPartition(value, partitioning) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const keys = Object.keys(value);
+    if (keys.length !== 1 || (keys[0] !== 'en' && keys[0] !== 'iv')) return value;
+
+    const wanted = partitioning === 'invariant' ? 'iv' : 'en';
+    if (keys[0] === wanted) return value;
+    return { [wanted]: value[keys[0]] };
+}
+
+// Rename each key of a fields object (data / searchFields / titles) to the field
+// name THIS site's schema actually uses, based on the config's fieldAliases and
+// the live schema. Optionally also fix the { iv } vs { en } wrapper to match the
+// field's partitioning. Keys with no schema match are left untouched (they may
+// be injected custom fields, or the API will report them). Returns a new object.
+//
+// SAFE BY DESIGN: it only renames a key when the schema has a DIFFERENT spelling
+// for it. For any site where the upload already succeeds, every key already
+// matches, so this is a no-op there. It only changes the failing case.
+function conformFields(fieldsObj, fieldMap, config, { conformPartitions } = {}) {
+    if (!fieldsObj || !fieldMap) return fieldsObj;
+    const out = {};
+
+    for (const [key, value] of Object.entries(fieldsObj)) {
+        const match = resolveField(getFieldCandidates(config, key), fieldMap);
+        let targetKey = match ? match.name : key;
+
+        // Never clobber a key already present under its real name.
+        if (targetKey !== key && Object.prototype.hasOwnProperty.call(out, targetKey)) {
+            console.warn(`Field "${key}" resolves to "${targetKey}" but that key already exists — keeping "${key}" as-is.`);
+            targetKey = key;
+        }
+        if (targetKey !== key) {
+            console.log(`Field "${key}" -> "${targetKey}" (matched this site's schema).`);
+        }
+
+        out[targetKey] = (conformPartitions && match)
+            ? conformPartition(value, match.partitioning)
+            : value;
+    }
+    return out;
+}
+
 // Reference lists pulled from /api/apps/<site>/<endpoint> for EVERY type. Names
 // in each sheet's PermissionSet / Categories columns are matched against these
 // to fill in ids. A type can override this (e.g. `referenceData: []` to skip),
@@ -70,13 +211,32 @@ const DEFAULT_REFERENCE_DATA = ["permissionSet", "categories"];
 
 // Each config maps a sheet to an endpoint + payload shape. `standardColumns`
 // lists the columns the mapper already handles; ANY column not in that list is
-// auto-injected into `data` as a custom field (see processUpload). So the only
-// columns to leave OUT are the genuine custom/extra ones for that sheet.
+// auto-injected into `data` as a custom field wrapped in { iv: ... }.
+//
+// ENDPOINT vs ENDPOINTS: use `endpoint: "slug"` when the slug is the same on
+// every site. Use `endpoints: ["a", "b"]` (preference order) when different
+// sites use different WORDS for the same type. Punctuation/casing variants of a
+// single slug are matched automatically.
+//
+// FIELDALIASES: optional per-type map of { nameTheMapperEmits: ["altName", ...] }
+// for when sites name the SAME field differently (e.g. faxnumber vs fax). At
+// upload time the data key is renamed to whichever name the resolved schema
+// actually has. Only list genuinely different words; casing/punctuation is
+// handled for you. Leave it off entirely for types whose fields don't vary.
+//
+// IMPORTANT: an injected column only works if a field with that EXACT name
+// exists in the Squidex/CivicPlus schema AND is invariant (iv-partitioned).
+// If it doesn't, the API rejects the whole record. That is exactly what the
+// leftover test columns ("Ack" on Resources, "new" on Staff) were doing — they
+// aren't real schema fields, so those two content types failed on every row.
+// They are now listed in standardColumns so they are ignored instead of sent.
+// => The rule is: leave a column OUT of standardColumns ONLY if it is a real
+//    invariant custom field in your schema.
 const uploadConfig = {
     articles: {
         sheetIndex: 0,
         endpoint: "article",
-        standardColumns: ["Title", "ContentType", "ContentName", "Content", "Publish", "PermissionSet", "Categories", "Tags", "Name"], // leaves TestName as a custom field
+        standardColumns: ["Title", "ContentType", "ContentName", "Content", "Publish", "PermissionSet", "Categories", "Tags", "Name"],
         mapPayload: (entry, lookups) => ({
             data: { name: { en: entry.Title }, article: { en: entry.Content } },
             contentTypeName: entry.ContentType,
@@ -89,8 +249,16 @@ const uploadConfig = {
     },
     resources: {
         sheetIndex: 1,
-        endpoint: "resourcedirectory",
-        standardColumns: ["Department", "MaskedEmail", "PhoneNumber", "AdditionalNumber", "FaxNumber", "Address1", "Address2", "City", "State", "Zip", "Latitude", "Longitude", "HoursOfOperation", "AdditionalInformation", "Name", "Email", "Fax", "Hours", "WebsiteUrl", "WebsiteDisplayName", "Description", "Publish", "UserName", "PermissionSet", "Categories"], // leaves Ack as a custom field
+        // Was "resourcedirectory" — that URL 404s. Squidex slugs are kebab-case
+        // (see your own "gh-agenda" / "name-of-event"), so the real slug is almost
+        // certainly "resource-directory". Resolution confirms it against /schemas,
+        // and a site that spells it "resourcedirectory" still matches (normalized).
+        endpoint: "resource-directory",
+        // "Ack" added: it is a test column, not a schema field. Without this it
+        // was injected as { iv: "david" } and the API rejected every row.
+        standardColumns: ["Department", "MaskedEmail", "PhoneNumber", "AdditionalNumber", "FaxNumber", "Address1", "Address2", "City", "State", "Zip", "Latitude", "Longitude", "HoursOfOperation", "AdditionalInformation", "Name", "Email", "Fax", "Hours", "WebsiteUrl", "WebsiteDisplayName", "Description", "Publish", "UserName", "PermissionSet", "Categories", "Ack"],
+        // Add fieldAliases here the same way departments does if resource field
+        // names vary across sites (e.g. faxnumber: ["fax"]).
         mapPayload: (entry, lookups) => ({
             data: {
                 department: { en: entry.Department },
@@ -196,14 +364,27 @@ const uploadConfig = {
     },
     staff: {
         sheetIndex: 3,
-        endpoint: "enhancedemployee",
-        standardColumns: ["PermissionSet", "Categories", "FirstName", "LastName", "Title", "Department", "PhoneNumber", "FaxNumber", "EmailAddress", "Biography", "Publish", "Name"], // leaves `new` as a custom field
+        // Different sites spell this differently. Only list genuinely different
+        // NAMES; punctuation/casing variants (enhancedemployee, enhanced_employee,
+        // ...) are matched automatically by the resolver. Order = preference.
+        endpoints: ["employee", "enhanced-employee"],
+        // "new" added: test column, not a schema field (was injected as { iv: "adsfasdf" }).
+        standardColumns: ["PermissionSet", "Categories", "FirstName", "LastName", "Title", "Department", "PhoneNumber", "FaxNumber", "EmailAddress", "Biography", "Publish", "Name", "new"],
+        // Field names that vary site to site. Left side = what mapPayload emits.
+        fieldAliases: {
+            phonenumber: ["phone"],
+            faxnumber: ["fax"],
+            emailaddress: ["email"],
+        },
         mapPayload: (entry, lookups) => ({
             data: {
                 firstname: { en: entry.FirstName },
                 lastname: { en: entry.LastName },
                 title: { en: entry.Title },
-                department: { en: [] }, //FIX LATER
+                // FIX LATER: `department` is almost certainly a reference to a
+                // Department content item, so it needs the target item's id, not
+                // the plain string in the sheet. Left as an empty reference for now.
+                department: { en: [] },
                 phonenumber: { en: entry.PhoneNumber },
                 faxnumber: { en: entry.FaxNumber },
                 emailaddress: { en: entry.EmailAddress },
@@ -217,8 +398,19 @@ const uploadConfig = {
     },
     departments: {
         sheetIndex: 4,
-        endpoint: "enhanceddepartment",
+        // Was "enhanceddepartment" (404). Kebab-case slug is the likely default,
+        // but some sites drop the "enhanced" prefix — list both, most-specific first.
+        endpoints: ["enhanced-department", "department"],
         standardColumns: ["Department", "PhoneNumber", "EmergencyNumber", "FaxNumber", "HoursOfOperation", "AdditionalInformation", "ParentDepartment", "StaffDirectory", "Publish", "Name", "PermissionSet", "Categories"],
+        // The field-name variants you hit (faxnumber vs fax, etc.). Add/adjust as
+        // you discover more; an alias that no site actually has is simply ignored.
+        fieldAliases: {
+            phonenumber: ["phone"],
+            faxnumber: ["fax", "faxnumber"],
+            emergencynumber: ["emergencyphonenumber", "emergency"],
+            hoursofoperation: ["hours"],
+            additionalinformation: ["additionalinfo"],
+        },
         mapPayload: (entry, lookups) => ({
             data: {
                 department: { en: entry.Department },
@@ -227,8 +419,10 @@ const uploadConfig = {
                 faxnumber: { en: entry.FaxNumber },
                 hoursofoperation: { en: entry.HoursOfOperation },
                 additionalinformation: { en: entry.AdditionalInformation },
-                parentdepartment: { iv: [] }, //FIX LATER
-                staffdirectory: { iv: [] }, //FIX LATER
+                // FIX LATER: both are references to other content items and need
+                // resolved ids. Empty arrays are usually accepted by Squidex.
+                parentdepartment: { iv: [] },
+                staffdirectory: { iv: [] },
             },
             permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
@@ -240,9 +434,26 @@ const uploadConfig = {
         sheetIndex: 5,
         endpoint: "bpquicklink",
         standardColumns: ["Link", "Publish", "Name", "PermissionSet", "Categories"],
+        // Was a hardcoded placeholder ({ url: "#" }, hardcoded permissionSet) that
+        // ignored the sheet entirely. Now wired to the real Link/Name columns and
+        // consistent with every other type.
+        //
+        // NOTE on the "title not defined" error you saw: nothing was being
+        // injected here (this sheet has no extra columns), so that error came
+        // from the API rejecting the placeholder — the link component needs a
+        // display label, which { url: "#" } didn't provide. This sends url +
+        // displayName. If your schema calls that sub-field `title` rather than
+        // `displayName`, rename it below; if the link field is invariant, change
+        // `en` to `iv`.
         mapPayload: (entry, lookups) => ({
             data: {
-                link: { en: entry.Link }
+                link: {
+                    en: {
+                        url: entry.Link,
+                        displayName: entry.Name,
+                        openInNewWindow: true
+                    }
+                }
             },
             permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
@@ -257,12 +468,17 @@ const uploadConfig = {
         mapPayload: (entry, lookups) => ({
             data: {
                 newstitle: { en: entry.NewsTitle },
-                newsdate: { iv: {
-                    startDate: "2019-08-24T14:15:22Z",
-                    endDate: "2019-09-24T14:15:22Z"
-                } }, //FIX LATER
+                // FIX LATER: real date range. Uses the sheet's NewsDate for both
+                // ends if present, otherwise falls back to a placeholder window.
+                newsdate: {
+                    iv: {
+                        startDate: entry.NewsDate || "2019-08-24T14:15:22Z",
+                        endDate: entry.NewsDate || "2019-09-24T14:15:22Z"
+                    }
+                },
                 newstext: { en: entry.NewsText },
-                newsasset: { iv: [] }, //FIX LATER
+                // FIX LATER: asset reference (needs an uploaded asset id).
+                newsasset: { iv: [] },
             },
             permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
@@ -281,10 +497,10 @@ const uploadConfig = {
                 "date-of-event": { iv: entry.DateOfEvent },
                 "start-time-of-event": { iv: entry.StartTimeOfEvent },
                 details: { iv: entry.Details },
-                attachments: { iv: [] }, //FIX LATER
-                "url-link": { iv: "test.com" }, //FIX LATER
-                "submission-pdf": { iv: [] }, //FIX LATER
-
+                // FIX LATER: asset references.
+                attachments: { iv: [] },
+                "url-link": { iv: entry.UrlLink || "test.com" },
+                "submission-pdf": { iv: [] },
             },
             permissionSet: permissionSetByName(entry, lookups),
             tags: parseTags(entry.Tags),
@@ -292,20 +508,8 @@ const uploadConfig = {
             publish: entry.Publish
         })
     },
-    agendas: {
-        sheetIndex: 8,
-        endpoint: "gh-agenda",
-        standardColumns: ["Publish", "Name", "PermissionSet", "Categories"],
-        mapPayload: (entry, lookups) => ({
-            data: {}, //FIX LATER: the Agendas and Minutes sheet has no content columns yet
-            permissionSet: permissionSetByName(entry, lookups),
-            tags: parseTags(entry.Tags),
-            categories: parseCategories(entry.Categories, lookups.categories),
-            publish: entry.Publish
-        })
-    },
     facility: {
-        sheetIndex: 9,
+        sheetIndex: 8,
         endpoint: "facility",
         standardColumns: ["FacilityName", "Publish", "Name", "PermissionSet", "Categories"],
         mapPayload: (entry, lookups) => ({
@@ -317,6 +521,176 @@ const uploadConfig = {
         })
     }
 }
+
+// --- Optional: extend endpoint candidates without redeploying ---
+//
+// Set an env var per type to append site-specific slugs discovered in the
+// field, e.g.  ENDPOINT_ALIASES_STAFF="employee,enhanced-employee,employe-records"
+// These are appended AFTER the built-in candidates (lower preference) and still
+// benefit from normalized matching.
+for (const [type, cfg] of Object.entries(uploadConfig)) {
+    const extra = process.env[`ENDPOINT_ALIASES_${type.toUpperCase()}`];
+    if (extra) {
+        const extras = extra.split(',').map(s => s.trim()).filter(Boolean);
+        if (extras.length) {
+            cfg.endpoints = [...getEndpointCandidates(cfg), ...extras];
+            console.log(`[${type}] endpoint candidates extended via env: ${cfg.endpoints.join(', ')}`);
+        }
+    }
+}
+
+// --- Optional: extend field aliases without redeploying ---
+//
+// Set an env var per type as JSON to merge extra field aliases discovered in the
+// field, e.g.  FIELD_ALIASES_DEPARTMENTS='{"faxnumber":["fax","faxno"]}'
+// Merged onto (and appended to) whatever the config already declares.
+for (const [type, cfg] of Object.entries(uploadConfig)) {
+    const raw = process.env[`FIELD_ALIASES_${type.toUpperCase()}`];
+    if (!raw) continue;
+    try {
+        const extra = JSON.parse(raw);
+        cfg.fieldAliases = cfg.fieldAliases || {};
+        for (const [key, alts] of Object.entries(extra)) {
+            const existing = cfg.fieldAliases[key] || [];
+            cfg.fieldAliases[key] = [...new Set([...existing, ...[].concat(alts)])];
+        }
+        console.log(`[${type}] field aliases extended via env.`);
+    } catch (e) {
+        console.warn(`Ignoring FIELD_ALIASES_${type.toUpperCase()} — not valid JSON: ${e.message}`);
+    }
+}
+
+// --- Asset (raw file) upload ---
+//
+// Separate from the Excel-driven content upload below: this posts ONE binary
+// file (image, PDF, doc, whatever) straight to the assets endpoint as
+// multipart/form-data — the same shape the site's own upload UI sends.
+// `categories` is repeated once per id (that's how this API represents an
+// array in form-data); `permissionSet` is a single id. Node's built-in
+// fetch/FormData/Blob handle the multipart body; no extra package needed.
+async function postAssetFile({ siteURL, accessToken, parentId, publish, fileBuffer, fileName, mimeType, categoryIds = [], permissionSetId }) {
+    const form = new FormData();
+    form.append('file', new Blob([fileBuffer], { type: mimeType || 'application/octet-stream' }), fileName);
+
+    for (const id of categoryIds) {
+        if (id) form.append('categories', id);
+    }
+    if (permissionSetId) {
+        form.append('permissionSet', permissionSetId);
+    }
+
+    const url = new URL(`https://content.civicplus.com/api/apps/${siteURL}/assets`);
+    url.searchParams.set('parentId', parentId || '00000000-0000-0000-0000-000000000000');
+    url.searchParams.set('publish', String(!!publish));
+
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${accessToken}`
+            // No Content-Type here — fetch generates its own multipart
+            // boundary, and setting one manually will break the upload.
+        },
+        body: form
+    });
+
+    if (!response.ok) {
+        const errBody = await response.text();
+        throw new Error(`HTTP ${response.status}: ${errBody}`);
+    }
+    return response.json();
+}
+
+// Folder-of-files upload: the assets API takes one file per request, so each
+// selected file becomes its own POST, run in small concurrent batches (same
+// pattern as the Excel batching below). Categories / permissionSet can be
+// given as NAMES — resolved against the site's reference data with the same
+// resolveId() used everywhere else in this file — or as raw ids.
+app.post('/upload/assets', (req, res) => {
+    uploadAssetFiles(req, res, async (uploadErr) => {
+        if (uploadErr) {
+            return res.status(400).json({ message: uploadErr.message });
+        }
+
+        const { url, apiKey, parentId, categories, permissionSet, publish } = req.body;
+
+        if (!req.files || !req.files.length) {
+            return res.status(400).json({ message: 'No files selected. Choose a folder and try again.' });
+        }
+        if (!url || !apiKey) {
+            return res.status(400).json({ message: 'Website URL and token are required.' });
+        }
+
+        console.log(`Processing [assets] - URL: ${url} - ${req.files.length} file(s)`);
+
+        try {
+            // Reuse the same reference-data lookups the content-type uploads use,
+            // so a category/permission-set name here means the same thing it does
+            // in the Excel sheets. Missing/unreachable lookups just leave names
+            // unresolved rather than failing the whole batch.
+            const [permissionSetLookup, categoriesLookup] = await Promise.all([
+                fetchReferenceData(url, 'permissionSet', apiKey).catch(() => new Map()),
+                fetchReferenceData(url, 'categories', apiKey).catch(() => new Map())
+            ]);
+
+            const permissionSetId = permissionSet
+                ? resolveId(permissionSet, permissionSetLookup, 'permissionSet')
+                : undefined;
+
+            const categoryIds = categories
+                ? String(categories).split(',').map(c => c.trim()).filter(Boolean)
+                    .map(name => resolveId(name, categoriesLookup, 'category'))
+                    .filter(Boolean)
+                : [];
+
+            const successes = [];
+            const failures = [];
+            const batchSize = 5;
+
+            for (let i = 0; i < req.files.length; i += batchSize) {
+                const batch = req.files.slice(i, i + batchSize);
+                console.log(`Uploading asset batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(req.files.length / batchSize)}`);
+
+                const results = await Promise.all(batch.map(async (file) => {
+                    try {
+                        const data = await postAssetFile({
+                            siteURL: url,
+                            accessToken: apiKey,
+                            parentId,
+                            publish: publish === 'true' || publish === true,
+                            fileBuffer: file.buffer,
+                            fileName: file.originalname,
+                            mimeType: file.mimetype,
+                            categoryIds,
+                            permissionSetId
+                        });
+                        return { file: file.originalname, data };
+                    } catch (error) {
+                        console.error(`Asset "${file.originalname}" failed:`, error.message);
+                        return { file: file.originalname, error: error.message };
+                    }
+                }));
+
+                for (const r of results) {
+                    if (r.error) failures.push(r);
+                    else successes.push(r);
+                }
+            }
+
+            if (failures.length === 0) {
+                return res.json({ message: `Upload complete. Uploaded ${successes.length} file(s).` });
+            }
+
+            return res.status(207).json({
+                message: `Uploaded ${successes.length} of ${successes.length + failures.length} file(s). ${failures.length} failed.`,
+                errors: failures.slice(0, 10).map(f => `${f.file}: ${f.error}`)
+            });
+        } catch (error) {
+            console.error(error);
+            res.status(500).json({ message: error.message || 'Upload failed. Check server logs.' });
+        }
+    });
+});
+
 
 // --- Single Dynamic Route ---
 
@@ -345,8 +719,19 @@ app.post('/upload/:type', (req, res) => {
         try {
             // Parse the workbook straight from the uploaded buffer (no disk read).
             const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-            const executionResults = await processUpload(type, url, apiKey, workbook, 10);
-            res.json({ message: `Upload complete. Processed ${executionResults.length} ${type}.` });
+            const { successes, failures } = await processUpload(type, url, apiKey, workbook, 10);
+
+            if (failures.length === 0) {
+                return res.json({ message: `Upload complete. Processed ${successes.length} ${type}.` });
+            }
+
+            // Partial (or total) failure: report counts AND the actual API errors
+            // so you can see exactly which field each content type is rejecting,
+            // instead of a silent "Processed 0".
+            return res.status(207).json({
+                message: `Processed ${successes.length} of ${successes.length + failures.length} ${type}. ${failures.length} failed.`,
+                errors: failures.slice(0, 10).map(f => `Row ${f.row}: ${f.error}`)
+            });
         } catch (error) {
             console.error(error);
             res.status(500).json({ message: error.message || "Upload failed. Check server logs." });
@@ -386,45 +771,199 @@ async function fetchReferenceData(siteURL, endpoint, accessToken) {
 }
 
 
+// Best-effort list of the schema (content-type) slugs that actually exist in an
+// app. Used both to resolve which candidate slug this site uses and to turn an
+// opaque 404 into "here are the names that exist." Returns null if the endpoint
+// isn't reachable with this token, in which case we fall back to the first
+// candidate and let the POST report its own 404.
+async function fetchSchemaNames(siteURL, accessToken) {
+    try {
+        const response = await fetch(`https://content.civicplus.com/api/apps/${siteURL}/schemas`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
+        });
+        if (!response.ok) return null;
+        const json = await response.json();
+        const list = Array.isArray(json) ? json : (json.items || []);
+        const names = list
+            .map(s => (typeof s === 'string' ? s : (s?.name || s?.slug)))
+            .filter(Boolean);
+        return names.length ? names : null;
+    } catch {
+        return null;
+    }
+}
+
+
+// Read the resolved schema's fields as a map: normalizedName -> { name, partitioning }.
+// "partitioning" is "invariant" (=> { iv }) or a language (=> { en }); we only
+// need the binary distinction. Returns null if the schema/fields can't be read,
+// in which case field conforming is skipped and the mapper's output is sent as-is
+// (so nothing that currently works can break).
+async function fetchSchemaFieldMap(siteURL, schema, accessToken) {
+    try {
+        const response = await fetch(`https://content.civicplus.com/api/apps/${siteURL}/schemas/${schema}`, {
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' }
+        });
+        if (!response.ok) return null;
+        const json = await response.json();
+
+        // Be liberal about where the field array lives across API shapes.
+        const fields = json.fields || json?.schema?.fields || json?.data?.fields;
+        if (!Array.isArray(fields) || !fields.length) return null;
+
+        const map = new Map();
+        for (const f of fields) {
+            const name = f?.name || f?.slug;
+            if (!name) continue;
+            const partitioning = String(f?.partitioning || 'invariant').toLowerCase();
+            map.set(normalizeSlug(name), { name, partitioning });
+        }
+        return map.size ? map : null;
+    } catch {
+        return null;
+    }
+}
+
+
+// Schemas are app-wide, so fetch the list once per site and reuse it across all
+// content types in the same run (uploading 11 types to one site => 1 /schemas
+// call instead of 11). null results are NOT cached, so a transient failure is
+// retried on the next request.
+const SCHEMA_CACHE_TTL_MS = 5 * 60 * 1000;
+const schemaCache = new Map();      // siteURL -> { names, expires }
+const schemaFieldCache = new Map(); // `${site}::${schema}` -> { map, expires }
+
+async function getSchemaNames(siteURL, accessToken) {
+    const cached = schemaCache.get(siteURL);
+    if (cached && cached.expires > Date.now()) return cached.names;
+
+    const names = await fetchSchemaNames(siteURL, accessToken);
+    if (names) schemaCache.set(siteURL, { names, expires: Date.now() + SCHEMA_CACHE_TTL_MS });
+    return names; // don't cache null — retry next time
+}
+
+async function getSchemaFields(siteURL, schema, accessToken) {
+    const cacheKey = `${siteURL}::${schema}`;
+    const cached = schemaFieldCache.get(cacheKey);
+    if (cached && cached.expires > Date.now()) return cached.map;
+
+    const map = await fetchSchemaFieldMap(siteURL, schema, accessToken);
+    if (map) schemaFieldCache.set(cacheKey, { map, expires: Date.now() + SCHEMA_CACHE_TTL_MS });
+    return map; // don't cache null — retry next time
+}
+
+
 // --- Generic Engine ---
 
 async function processUpload(type, siteURL, accessToken, workbook, batchSize = 10) {
 
     const config = uploadConfig[type];
-    let apiURL = `https://content.civicplus.com/api/content/${siteURL}/${config.endpoint}`;
 
-    // Workbook now comes from the uploaded file (parsed in the route handler)
-    // instead of a hardcoded EvolveUploads.xlsx on the server.
     const sheetName = workbook.SheetNames[config.sheetIndex];
     if (!sheetName) {
         throw new Error(`The uploaded workbook has no sheet at index ${config.sheetIndex} for "${type}". It has ${workbook.SheetNames.length} sheet(s): ${workbook.SheetNames.join(', ')}.`);
     }
     const excelData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
 
-    // Load every reference list this type needs, once, before uploading.
-    // Defaults to permissionSet + categories for every type (see DEFAULT_REFERENCE_DATA).
-    // lookups ends up like { permissionSet: Map, categories: Map }.
-    const lookups = {};
-    for (const endpoint of (config.referenceData || DEFAULT_REFERENCE_DATA)) {
-        lookups[endpoint] = await fetchReferenceData(siteURL, endpoint, accessToken);
+    // --- Resolve the schema slug THIS site uses ---
+    // Instead of trusting a single hardcoded slug, resolve the configured
+    // candidate(s) against the schemas that actually exist on this site. This is
+    // what makes one codebase work across sites with different slugs, and turns a
+    // wrong slug into a precise, actionable error instead of a blind 404.
+    const candidates = getEndpointCandidates(config);
+    if (!candidates.length) {
+        throw new Error(`No endpoint(s) configured for "${type}". Add an "endpoint" string or "endpoints" array in uploadConfig.`);
     }
 
-    let executionResults = [];
+    const schemaNames = await getSchemaNames(siteURL, accessToken);
+    let endpoint;
+    if (schemaNames) {
+        endpoint = resolveEndpoint(candidates, schemaNames);
+        if (!endpoint) {
+            const close = suggestClosestSchemas(candidates, schemaNames);
+            throw new Error(
+                `None of the known slugs for "${type}" (${candidates.join(', ')}) exist in app "${siteURL}". ` +
+                (close.length
+                    ? `Closest schemas that DO exist: ${close.join(', ')}. `
+                    : `Existing schemas: ${schemaNames.join(', ')}. `) +
+                `Add the correct slug to endpoints[] for "${type}" in uploadConfig ` +
+                `(or set ENDPOINT_ALIASES_${type.toUpperCase()}).`
+            );
+        }
+        if (endpoint !== candidates[0]) {
+            console.log(`[${type}] resolved to schema "${endpoint}" for ${siteURL} (preferred "${candidates[0]}").`);
+        }
+    } else {
+        // Couldn't list schemas (token can't reach /schemas). Fall back to the
+        // first candidate and let the POST report its own 404 if it's wrong.
+        endpoint = candidates[0];
+        console.warn(`Could not list schemas for "${siteURL}" — trying "${endpoint}" for "${type}". A 404 below means it's the wrong slug for this site.`);
+    }
+
+    const apiURL = `https://content.civicplus.com/api/content/${siteURL}/${endpoint}`;
+
+    // --- Resolve field names THIS site uses ---
+    // Read the resolved schema's real field names once, then rename each row's
+    // data keys per fieldAliases. If the fields can't be read, conforming is
+    // skipped and the mapper's field names are sent as-is (current behavior).
+    // Partition conforming (fixing { iv } vs { en } to match the field) is
+    // opt-in: set conformPartitions:true on the type, or CONFORM_PARTITIONS=1.
+    const conformPartitions = config.conformPartitions === true || !!process.env.CONFORM_PARTITIONS;
+    const fieldMap = process.env.DISABLE_SCHEMA_CONFORM
+        ? null
+        : await getSchemaFields(siteURL, endpoint, accessToken);
+    if (!fieldMap && config.fieldAliases && !process.env.DISABLE_SCHEMA_CONFORM) {
+        console.warn(`Could not read fields for schema "${endpoint}" on "${siteURL}" — field-name aliases won't be applied (sending the mapper's field names as-is).`);
+    }
+
+    // Load every reference list this type needs, once, before uploading.
+    const lookups = {};
+    for (const refEndpoint of (config.referenceData || DEFAULT_REFERENCE_DATA)) {
+        lookups[refEndpoint] = await fetchReferenceData(siteURL, refEndpoint, accessToken);
+    }
+
+    const successes = [];
+    const failures = [];
 
     for (let i = 0; i < excelData.length; i += batchSize) {
         const batch = excelData.slice(i, i + batchSize);
         console.log(`Processing batch ${Math.floor(i / batchSize) + 1} of ${Math.ceil(excelData.length / batchSize)}`);
 
-        const batchPromises = batch.map(entry => {
+        const batchPromises = batch.map((entry, j) => {
+            // Excel row number as the user sees it (1-based + header row).
+            const rowNumber = i + j + 2;
             const requestData = config.mapPayload(entry, lookups);
 
             // --- DYNAMIC EXTRA FIELD INJECTION ---
+            // Any column not in standardColumns is treated as an invariant custom
+            // field. Empty cells are skipped so a blank column never sends { iv: "" }
+            // (or, worse, an empty partition the API can reject).
             Object.keys(entry).forEach(key => {
                 if (config.standardColumns && !config.standardColumns.includes(key)) {
-                    // Based on your schema, wrapped in { iv: ... } or { en: ... }
-                    requestData.data[key] = { iv: entry[key] };
+                    const value = entry[key];
+                    if (value !== undefined && value !== null && value !== '') {
+                        requestData.data[key] = { iv: value };
+                    }
                 }
             });
+
+            // --- FIELD-NAME CONFORMING ---
+            // Rename data (and searchFields / titles, if present) to the field
+            // names this site's schema actually uses. No-op when a key already
+            // matches, so working sites are unaffected.
+            if (fieldMap) {
+                requestData.data = conformFields(requestData.data, fieldMap, config, { conformPartitions });
+                if (requestData.searchFields) requestData.searchFields = conformFields(requestData.searchFields, fieldMap, config, { conformPartitions });
+                if (requestData.titles) requestData.titles = conformFields(requestData.titles, fieldMap, config, { conformPartitions });
+            }
+
+            // Set DEBUG_PAYLOAD=1 to see exactly what is sent for each row.
+            if (process.env.DEBUG_PAYLOAD) {
+                console.log(`Row ${rowNumber} payload:`, JSON.stringify(requestData, null, 2));
+            }
+
             return fetch(apiURL, {
                 method: 'POST',
                 headers: {
@@ -436,15 +975,19 @@ async function processUpload(type, siteURL, accessToken, workbook, batchSize = 1
             .then(async response => {
                 if (!response.ok) {
                     const errBody = await response.text();
+                    if (response.status === 404) {
+                        // "Not Found" = the schema slug in this URL doesn't exist.
+                        // Resolution should have caught this already; if we get here
+                        // the /schemas list was unavailable, so surface the slug we tried.
+                        throw new Error(`HTTP 404 — schema "${endpoint}" not found at ${apiURL}. Verify the schema slug (it is a URL problem, not a field problem).`);
+                    }
                     throw new Error(`HTTP ${response.status}: ${errBody}`);
                 }
                 return response.json();
             })
             .then(async data => {
-                console.log(data);
-
                 if (entry.Publish === 'Yes') {
-                    const patchUrl = `https://content.civicplus.com/api/content/${siteURL}/${config.endpoint}/${data.id}/status/?=`;
+                    const patchUrl = `https://content.civicplus.com/api/content/${siteURL}/${endpoint}/${data.id}/status/?=`;
                     try {
                         const patchRes = await fetch(patchUrl, {
                             method: 'PUT',
@@ -465,17 +1008,26 @@ async function processUpload(type, siteURL, accessToken, workbook, batchSize = 1
                     }
                 }
 
-                return data;
+                return { row: rowNumber, data };
             })
             .catch(error => {
-                console.error('Fetch error:', error);
-                return null;
+                console.error(`Row ${rowNumber} failed:`, error.message);
+                return { row: rowNumber, error: error.message };
             });
         });
 
         const batchResults = await Promise.all(batchPromises);
-        executionResults = executionResults.concat(batchResults.filter(result => result !== null));
+        for (const result of batchResults) {
+            if (result.error) failures.push(result);
+            else successes.push(result);
+        }
     }
 
-    return executionResults;
+    return { successes, failures };
 }
+
+if (require.main === module) {
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
+module.exports = { app, uploadConfig, processUpload, fetchReferenceData, postAssetFile };
