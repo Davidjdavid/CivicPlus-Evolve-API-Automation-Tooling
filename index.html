@@ -1,44 +1,98 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
     <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Evolve Content Uploader</title>
+        <link rel="icon" href="/civicplus-mark.png">
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="/style.css">
     </head>
     <body>
-        <div id="instructions">
-            <p><b>Instructions on how to use this tool:</b></p>
-            <ol>
-                <li>Enter the Evolve site URL and your API token.</li>
-                <li>Choose the Excel workbook (.xlsx) that holds your content — one sheet per content type, in the expected order.</li>
-                <li>Click the button for the content type you want to upload. The matching sheet from the file you selected is parsed and uploaded.</li>
-            </ol>
-        </div>
+        <header id="topbar">
+            <div id="topbarBrand">
+                <img src="/civicplus-mark.png" alt="" id="brandMark">
+                <span id="brandTitle">Evolve Content Uploader</span>
+            </div>
+            <div id="topbarTag">Internal tool</div>
+        </header>
 
-        <div id="mainDashboard">
-            <h1>Upload content to Evolve site</h1>
-            <div id="inputDiv">
-                <label for="inputURL">Website URL:</label>
-                <input type="text" id="inputURL"><br>
-                <label for="inputToken">Token:</label>
-                <input type="text" id="inputToken" value=""><br>
-                <label for="inputFile">Excel file:</label>
-                <input type="file" id="inputFile" accept=".xlsx,.xlsm,.xls,.csv"><br>
-                <span id="fileName"></span>
-            </div>
+        <div id="appShell">
+            <aside id="connectionRail">
+                <h2>Connection</h2>
+                <p id="instructions">
+                    Enter the site URL and token once — every upload on the right reuses them.
+                    Choose a workbook for the sheet uploads, one sheet per content type in order.
+                </p>
 
-            <div id="buttonsDiv">
-                <button class="upload-btn" data-endpoint="/upload/articles">Upload articles</button>
-                <button class="upload-btn" data-endpoint="/upload/resources">Upload resources</button>
-                <button class="upload-btn" data-endpoint="/upload/faqs">Upload FAQs</button>
-                <button class="upload-btn" data-endpoint="/upload/staff">Upload staff</button>
-                <button class="upload-btn" data-endpoint="/upload/departments">Upload departments</button>
-                <button class="upload-btn" data-endpoint="/upload/quicklinks">Upload quick links</button>
-                <button class="upload-btn" data-endpoint="/upload/news">Upload news</button>
-                <button class="upload-btn" data-endpoint="/upload/calendar">Upload calendar</button>
-                <button class="upload-btn" data-endpoint="/upload/facility">Upload facilities</button>
-            </div>
-            <div id="resultsDiv">
-                <p id="results">Results: N/A</p>
-            </div>
+                <label for="inputURL">Site URL</label>
+                <input type="text" id="inputURL" placeholder="client-site.civicplus.com">
+
+                <label for="inputToken">Token</label>
+                <input type="text" id="inputToken" value="">
+
+                <label for="inputFile">Content workbook</label>
+                <input type="file" id="inputFile" accept=".xlsx,.xlsm,.xls,.csv">
+                <span id="fileName" class="hint"></span>
+            </aside>
+
+            <main id="mainDashboard">
+                <section id="contentSection">
+                    <div class="section-head">
+                        <h2>Content types</h2>
+                        <p class="section-hint">Uploads the matching sheet from the workbook.</p>
+                    </div>
+                    <div id="buttonsDiv">
+                        <button class="upload-btn" data-endpoint="/upload/articles" data-name="Articles" data-desc="General pages and blog-style posts" aria-label="Upload articles — general pages and blog-style posts"></button>
+                        <button class="upload-btn" data-endpoint="/upload/resources" data-name="Resources" data-desc="Resource directory entries" aria-label="Upload resources — resource directory entries"></button>
+                        <button class="upload-btn" data-endpoint="/upload/faqs" data-name="FAQs" data-desc="Frequently asked questions" aria-label="Upload FAQs — frequently asked questions"></button>
+                        <button class="upload-btn" data-endpoint="/upload/staff" data-name="Staff" data-desc="Employee directory profiles" aria-label="Upload staff — employee directory profiles"></button>
+                        <button class="upload-btn" data-endpoint="/upload/departments" data-name="Departments" data-desc="Department directory entries" aria-label="Upload departments — department directory entries"></button>
+                        <button class="upload-btn" data-endpoint="/upload/quicklinks" data-name="Quick links" data-desc="Homepage shortcut links" aria-label="Upload quick links — homepage shortcut links"></button>
+                        <button class="upload-btn" data-endpoint="/upload/news" data-name="News" data-desc="Newsflash announcements" aria-label="Upload news — newsflash announcements"></button>
+                        <button class="upload-btn" data-endpoint="/upload/calendar" data-name="Calendar" data-desc="Calendar events" aria-label="Upload calendar — calendar events"></button>
+                        <button class="upload-btn" data-endpoint="/upload/facility" data-name="Facilities" data-desc="Facility listings" aria-label="Upload facilities — facility listings"></button>
+                    </div>
+                </section>
+
+                <section id="assetsSection">
+                    <div class="section-head">
+                        <h2>Documents</h2>
+                        <p class="section-hint">Uploads every file in a folder to the assets library.</p>
+                    </div>
+
+                    <label for="inputFolder">Folder of files</label>
+                    <input type="file" id="inputFolder" webkitdirectory multiple>
+                    <span id="folderFileCount" class="hint"></span>
+
+                    <div class="field-row">
+                        <div class="field">
+                            <label for="inputParentId">Parent folder ID</label>
+                            <input type="text" id="inputParentId" placeholder="00000000-0000-0000-0000-000000000000">
+                        </div>
+                        <div class="field">
+                            <label for="inputPermissionSet">Permission set</label>
+                            <input type="text" id="inputPermissionSet" placeholder="Name, optional">
+                        </div>
+                    </div>
+
+                    <label for="inputCategories">Categories</label>
+                    <input type="text" id="inputCategories" placeholder="Comma-separated names, optional">
+
+                    <label id="publishLabel" for="inputPublish"><input type="checkbox" id="inputPublish"> Publish immediately</label>
+
+                    <button id="uploadAssetsBtn" class="assets-btn">Upload documents</button>
+                </section>
+
+                <section id="logSection">
+                    <div id="resultsDiv">
+                        <span id="statusDot"></span>
+                        <p id="results">Ready.</p>
+                    </div>
+                </section>
+            </main>
         </div>
 
         <script>
@@ -52,6 +106,23 @@
             inputFile.addEventListener('change', () => {
                 fileName.innerText = inputFile.files.length
                     ? `Selected: ${inputFile.files[0].name}`
+                    : '';
+            });
+
+            // --- Folder-of-documents (assets) upload ---
+            const inputFolder = document.getElementById('inputFolder');
+            const folderFileCount = document.getElementById('folderFileCount');
+            const inputParentId = document.getElementById('inputParentId');
+            const inputCategories = document.getElementById('inputCategories');
+            const inputPermissionSet = document.getElementById('inputPermissionSet');
+            const inputPublish = document.getElementById('inputPublish');
+            const uploadAssetsBtn = document.getElementById('uploadAssetsBtn');
+
+            // webkitdirectory hands back every file in the folder (and
+            // subfolders) as a flat FileList — just show how many were found.
+            inputFolder.addEventListener('change', () => {
+                folderFileCount.innerText = inputFolder.files.length
+                    ? `Selected: ${inputFolder.files.length} file(s)`
                     : '';
             });
 
@@ -104,6 +175,60 @@
                         }, 3000);
                     }
                 });
+            });
+
+            uploadAssetsBtn.addEventListener('click', async () => {
+                if (!inputFolder.files.length) {
+                    resultsField.innerText = 'Please choose a folder first.';
+                    return;
+                }
+                if (!inputURL.value || !inputToken.value) {
+                    resultsField.innerText = 'Website URL and token are required.';
+                    return;
+                }
+
+                uploadAssetsBtn.disabled = true;
+                resultsField.innerText = `Uploading ${inputFolder.files.length} file(s)...`;
+
+                // Every file the folder picker found goes in under the same
+                // "files" key — multer collects repeated keys into req.files.
+                const formData = new FormData();
+                for (const file of inputFolder.files) {
+                    formData.append('files', file);
+                }
+                formData.append('url', inputURL.value);
+                formData.append('apiKey', inputToken.value);
+                formData.append('parentId', inputParentId.value);
+                formData.append('categories', inputCategories.value);
+                formData.append('permissionSet', inputPermissionSet.value);
+                formData.append('publish', inputPublish.checked);
+
+                try {
+                    const response = await fetch('/upload/assets', {
+                        method: 'POST',
+                        // NOTE: do NOT set Content-Type here — the browser adds
+                        // the correct multipart boundary automatically.
+                        body: formData
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        resultsField.innerText = data.message;
+                    } else {
+                        let message = response.statusText;
+                        try {
+                            const errData = await response.json();
+                            if (errData && errData.message) message = errData.message;
+                        } catch (_) { /* response wasn't JSON */ }
+                        resultsField.innerText = `Error: ${message}`;
+                    }
+                } catch (error) {
+                    resultsField.innerText = 'Network error occurred.';
+                } finally {
+                    setTimeout(() => {
+                        uploadAssetsBtn.disabled = false;
+                    }, 3000);
+                }
             });
         </script>
     </body>
