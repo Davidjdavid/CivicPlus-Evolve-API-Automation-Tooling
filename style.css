@@ -155,7 +155,6 @@ h2 {
 }
 
 #connectionRail input[type="file"] {
-    padding: 8px 0;
     font-size: 0.82rem;
 }
 
@@ -319,6 +318,10 @@ h2 {
 .assets-btn:focus-visible {
     outline: 2px solid var(--ink);
     outline-offset: 2px;
+}
+
+.uploadButton{
+    padding-left: 3px;
 }
 
 /* --------------------------- Activity / status line --------------------------- */
