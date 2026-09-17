@@ -21,20 +21,21 @@
 
         <div id="appShell">
             <aside id="connectionRail">
-                <h2>Connection</h2>
+                <h2>Connection instructions</h2>
                 <p id="instructions">
-                    Enter the site URL and token once — every upload on the right reuses them.
-                    Choose a workbook for the sheet uploads, one sheet per content type in order.
+                    <p>Enter the site app name found in the URL while on the HCMS. It will be the the section betweenn slashes after the app.</p>
+                    <p>Then add the token from client section of the HCMS that has the correct premissions for each content type you are wishing to upload.</p>
+                    <p>Choose a workbook for the sheet uploads, one sheet per content type in order.</p>
                 </p>
 
-                <label for="inputURL">Site URL</label>
+                <label for="inputURL">Site app name</label>
                 <input type="text" id="inputURL" placeholder="client-site.civicplus.com">
 
                 <label for="inputToken">Token</label>
                 <input type="text" id="inputToken" value="">
 
                 <label for="inputFile">Content workbook</label>
-                <input type="file" id="inputFile" accept=".xlsx,.xlsm,.xls,.csv">
+                <input class="uploadButton" type="file" id="inputFile" accept=".xlsx,.xlsm,.xls,.csv">
                 <span id="fileName" class="hint"></span>
             </aside>
 
@@ -74,7 +75,7 @@
                         </div>
                         <div class="field">
                             <label for="inputPermissionSet">Permission set</label>
-                            <input type="text" id="inputPermissionSet" placeholder="Name, optional">
+                            <input type="text" id="inputPermissionSet" placeholder="Name, required">
                         </div>
                     </div>
 
