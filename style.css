@@ -1,133 +1,386 @@
+/* ---------------------------------------------------------------------
+   Design tokens
+   Ink and Signal are sampled directly from the CivicPlus mark, not
+   approximated. Paper is a cool neutral (not cream) so Signal red is the
+   only warm note on the page. One radius, one accent, used sparingly.
+--------------------------------------------------------------------- */
 :root {
-    --bg: #f4f4f9;
+    --ink: #383938;
+    --ink-soft: #6b6d6b;
+    --signal: #cc0020;
+    --signal-dark: #a50019;
+    --signal-tint: #fbe9ec;
+    --paper: #f5f6f5;
     --surface: #ffffff;
-    --text-primary: #1e293b;
-    --text-secondary: #64748b;
-    --border: #e2e8f0;
-    --accent: #3b82f6;
-    --radius: 8px;
+    --line: #e1e2df;
+    --confirm: #1b7a43;
+
+    --radius: 6px;
+    --font-ui: 'Public Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+* , *::before, *::after {
+    box-sizing: border-box;
 }
 
 body {
-    font-family: system-ui, -apple-system, sans-serif;
-    background-color: var(--bg);
-    color: var(--text-primary);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 40px 20px;
     margin: 0;
+    min-height: 100vh;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+}
+
+button, input {
+    font-family: inherit;
+    color: inherit;
+}
+
+h2 {
+    margin: 0;
+}
+
+/* --------------------------- Top bar --------------------------- */
+
+#topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 28px;
+    background: var(--ink);
+    color: #fff;
+    border-bottom: 3px solid var(--signal);
+}
+
+#topbarBrand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+#brandMark {
+    height: 28px;
+    width: auto;
+    display: block;
+}
+
+#brandTitle {
+    font-weight: 600;
+    font-size: 0.92rem;
+    letter-spacing: 0.01em;
+}
+
+#topbarTag {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.68);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    padding: 4px 10px;
+    border-radius: 999px;
+}
+
+/* --------------------------- App shell --------------------------- */
+
+#appShell {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 32px 28px 64px;
+    display: flex;
+    align-items: flex-start;
     gap: 24px;
 }
 
-#instructions {
-    width: 100%;
-    max-width: 600px;
+/* --------------------------- Connection rail --------------------------- */
+
+#connectionRail {
+    flex: 0 0 272px;
+    position: sticky;
+    top: 80px;
     background: var(--surface);
-    padding: 16px 20px;
+    border: 1px solid var(--line);
     border-radius: var(--radius);
-    border: 1px solid var(--border);
-    color: var(--text-secondary);
-    font-size: 0.9rem;
-    line-height: 1.5;
-}
-
-#mainDashboard {
-    background: var(--surface);
-    padding: 32px;
-    border-radius: var(--radius);
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    width: 100%;
-    max-width: 600px;
-    border: 1px solid var(--border);
-}
-
-h1 {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin: 0 0 24px 0;
-    text-align: left;
-}
-
-#inputDiv {
+    padding: 22px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    margin-bottom: 32px;
+    gap: 4px;
 }
 
-#inputDiv label {
-    font-weight: 500;
-    font-size: 0.85rem;
-    color: var(--text-secondary);
+#connectionRail h2 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+#instructions {
+    font-size: 0.82rem;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    margin: 0 0 12px;
+}
+
+#connectionRail label,
+#assetsSection > label,
+.field label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--ink-soft);
     display: flex;
     flex-direction: column;
     gap: 6px;
+    margin-top: 12px;
+    margin-bottom: 6px;
 }
 
-#inputDiv input {
-    padding: 10px 12px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    font-size: 1rem;
-    transition: border-color 0.2s, box-shadow 0.2s;
+#connectionRail input[type="text"],
+#connectionRail input[type="file"],
+#assetsSection input[type="text"] {
+    width: 100%;
+    padding: 9px 11px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: var(--paper);
+    font-size: 0.88rem;
 }
 
-#inputDiv input:focus {
+#connectionRail input[type="text"]:focus,
+#assetsSection input[type="text"]:focus {
     outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+    border-color: var(--signal);
+    box-shadow: 0 0 0 3px rgba(204, 0, 32, 0.12);
 }
 
-#inputDiv br { 
-    display: none; 
+#connectionRail input[type="file"] {
+    font-size: 0.82rem;
 }
+
+.hint {
+    display: block;
+    font-size: 0.76rem;
+    color: var(--ink-soft);
+    margin-top: 4px;
+}
+
+/* --------------------------- Main column --------------------------- */
+
+#mainDashboard {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+#contentSection,
+#assetsSection {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 20px 24px 22px;
+}
+
+.section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    margin-bottom: 14px;
+}
+
+.section-head h2 {
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.section-hint {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+}
+
+/* Content-type rows: a settings-style list, not a grid of identical pills.
+   Name/description come from data-name / data-desc via generated content, so
+   the button itself stays a single leaf node with no click-target quirks. */
 
 #buttonsDiv {
-    display: grid;
-    /* Automatically scales columns based on width, minimum 180px wide */
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
+    border-top: 1px solid var(--line);
 }
 
-button {
-    padding: 12px 16px;
-    background-color: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    color: var(--text-primary);
-    font-weight: 500;
-    font-size: 0.85rem;
+.upload-btn {
+    all: unset;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--line);
+    border-left: 3px solid transparent;
     cursor: pointer;
-    transition: all 0.2s ease;
-    text-align: center;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
-button:hover:not(:disabled) {
-    border-color: var(--accent);
-    color: var(--accent);
-    background-color: #f8fafc;
-    transform: translateY(-1px);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+.upload-btn:hover:not(:disabled) {
+    background: var(--paper);
+    border-left-color: var(--signal);
 }
 
-button:active:not(:disabled) {
-    transform: translateY(0);
+.upload-btn:focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: -2px;
 }
 
-button:disabled {
+.upload-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
-    background-color: #f1f5f9;
+}
+
+.upload-btn::before {
+    content: attr(data-name);
+    display: block;
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--ink);
+}
+
+.upload-btn::after {
+    content: attr(data-desc);
+    display: block;
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+}
+
+/* --------------------------- Documents (assets) --------------------------- */
+
+.field-row {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.field-row .field {
+    flex: 1;
+    min-width: 190px;
+}
+
+#assetsSection input[type="file"] {
+    padding: 8px 0;
+    font-size: 0.85rem;
+}
+
+#publishLabel {
+    flex-direction: row !important;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500 !important;
+    color: var(--ink) !important;
+    margin-top: 16px !important;
+}
+
+#publishLabel input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--signal);
+}
+
+.assets-btn {
+    margin-top: 16px;
+    align-self: flex-start;
+    background: var(--signal);
+    color: #fff;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease, transform 0.05s ease;
+}
+
+.assets-btn:hover:not(:disabled) {
+    background: var(--signal-dark);
+}
+
+.assets-btn:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+.assets-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.assets-btn:focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+}
+
+.uploadButton{
+    padding-left: 3px;
+}
+
+/* --------------------------- Activity / status line --------------------------- */
+
+#logSection {
+    background: var(--ink);
+    border-radius: var(--radius);
+    overflow: hidden;
 }
 
 #resultsDiv {
-    margin-top: 32px;
-    padding: 16px;
-    background-color: #f8fafc;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    border-left: 4px solid var(--accent);
-    color: var(--text-secondary);
-    font-size: 0.9rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 13px 20px;
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: #e8e9e7;
+}
+
+#statusDot {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #8b8d8b;
+}
+
+#results {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* --------------------------- Responsive --------------------------- */
+
+@media (max-width: 860px) {
+    #appShell {
+        flex-direction: column;
+        padding: 20px 16px 48px;
+    }
+
+    #connectionRail {
+        position: static;
+        width: 100%;
+    }
+}
+
+@media (max-width: 480px) {
+    #topbar {
+        padding: 0 16px;
+    }
+
+    #topbarTag {
+        display: none;
+    }
+
+    #contentSection,
+    #assetsSection {
+        padding: 16px;
+    }
 }
