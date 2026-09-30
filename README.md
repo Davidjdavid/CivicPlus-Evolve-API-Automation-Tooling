@@ -6,7 +6,7 @@ A local Node.js tool with a small web GUI for bulk-importing website content int
 
 1. You prep an Excel workbook (`EvolveUploads.xlsx`) with one sheet per content type.
 2. Start the local server (`node index.js`, or the included `.bat` on Windows), it serves a dashboard at `http://localhost:4000`.
-3. Enter the target Evolve site's app name and an access token. Optionally click **Test connection** first — it's read-only and reports whether the site is reachable, the token works, and which content types actually exist on that site.
+3. Enter the target Evolve site's app name and an access token. Optionally click **Test connection** first — it's read-only and reports whether the site is reachable, the token works, which content types actually exist on that site, and the full list of schemas on the site (flagging which ones this tool already uses).
 4. Choose your workbook. The tool reads its sheet names and matches each one to a content type.
 5. Click the button for the content type you want to upload. The server reads the matching sheet, maps each row into the JSON payload shape the Evolve API expects, and POSTs the records in batches of 10, reporting how many succeeded.
 
@@ -30,7 +30,10 @@ Matching ignores case and punctuation, so `Facility`, `facility`, and `FACILITY 
 
 ## Custom content types
 
-A sheet that doesn't match any known content type shows up under **Custom imports** in the sidebar, with its column headers listed. Give it a display name and the schema slug it should upload to, click **Add import**, and it becomes a regular upload button — every column is sent as a plain text field.
+Two ways to give a content type its own upload button:
+
+- **Register a content type** — a button in the sidebar, always available, no workbook required. Enter a display name, the schema slug on the site, and the sheet name it should read. Run **Test connection** first and the schema slug field autocompletes from the real schemas on that site, so you don't have to look one up or type it from memory. Every column in that sheet is uploaded as a plain text field.
+- **Unrecognized sheets** — load a workbook and any sheet that doesn't match a known type appears under *Unrecognized sheets in this workbook*, with its columns already listed, for one-click registration. Columns added this way are pinned to what the sheet had at that moment.
 
 Custom definitions are saved to `customTypes.json` next to `index.js`, so they survive the server restart the `.bat` file performs each run. Remove one from the **Saved custom types** list in the sidebar.
 
@@ -71,7 +74,7 @@ Then open `http://localhost:4000` in a browser.
 npm test
 ```
 
-Runs the full suite (265 tests). Nothing touches a real site — every test runs against mocked responses and synthetic workbooks. Run this before publishing new builds; see `TESTING.md` for what's covered and how it's structured.
+Runs the full suite (293 tests). Nothing touches a real site — every test runs against mocked responses and synthetic workbooks. Run this before publishing new builds; see `TESTING.md` for what's covered and how it's structured.
 
 ## Adding a new built-in content type
 

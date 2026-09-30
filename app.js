@@ -15,10 +15,22 @@ const customImportsPanel = document.getElementById('customImportsPanel');
 const unmatchedSheets = document.getElementById('unmatchedSheets');
 const savedCustomTypes = document.getElementById('savedCustomTypes');
 const savedCustomList = document.getElementById('savedCustomList');
+const addContentTypeBtn = document.getElementById('addContentTypeBtn');
+const manualTypeForm = document.getElementById('manualTypeForm');
+const manualTypeLabel = document.getElementById('manualTypeLabel');
+const manualTypeEndpoint = document.getElementById('manualTypeEndpoint');
+const manualTypeSheet = document.getElementById('manualTypeSheet');
+const manualTypeSave = document.getElementById('manualTypeSave');
+const manualTypeCancel = document.getElementById('manualTypeCancel');
+const manualTypeError = document.getElementById('manualTypeError');
 
 // Everything the last workbook inspection told us, so the sheet pickers
 // and the custom-import panel can be rebuilt without re-reading the file.
 let workbookSheets = [];
+// Schema slugs that actually exist on the site, learned from the last
+// Test connection. Empty until then — the slug fields just don't
+// autocomplete in that case.
+let siteSchemas = [];
 // type -> sheet name the user explicitly picked, overriding the automatic
 // name match. Only populated when someone changes a dropdown.
 const sheetOverrides = {};
@@ -128,6 +140,90 @@ async function inspectWorkbook() {
     }
 }
 
+// --- Registering a content type by hand ---
+//
+// Always available, with or without a workbook loaded — the
+// unrecognized-sheet shortcut further down is a convenience on top of
+// this, not the only way in. Columns aren't asked for here: without a
+// workbook there are no headers to read, so the server discovers them
+// from each row at upload time.
+
+addContentTypeBtn.addEventListener('click', () => {
+    const opening = manualTypeForm.hidden;
+    manualTypeForm.hidden = !opening;
+    addContentTypeBtn.textContent = opening ? 'Cancel' : '+ Register a content type';
+    if (opening) manualTypeLabel.focus();
+});
+
+manualTypeCancel.addEventListener('click', () => {
+    manualTypeForm.hidden = true;
+    manualTypeError.hidden = true;
+    addContentTypeBtn.textContent = '+ Register a content type';
+});
+
+manualTypeSave.addEventListener('click', async () => {
+    manualTypeError.hidden = true;
+
+    const label = manualTypeLabel.value.trim();
+    const endpoint = manualTypeEndpoint.value.trim();
+    const sheetName = manualTypeSheet.value.trim();
+
+    if (!label || !endpoint || !sheetName) {
+        manualTypeError.textContent = 'A display name, schema slug, and sheet name are all required.';
+        manualTypeError.hidden = false;
+        return;
+    }
+
+    manualTypeSave.disabled = true;
+    manualTypeSave.textContent = 'Saving…';
+
+    const result = await saveCustomType({ label, endpoint, sheetName });
+
+    manualTypeSave.disabled = false;
+    manualTypeSave.textContent = 'Save';
+
+    if (!result.ok) {
+        manualTypeError.textContent = result.message;
+        manualTypeError.hidden = false;
+        return;
+    }
+
+    resultsField.innerText = result.message;
+    manualTypeLabel.value = '';
+    manualTypeEndpoint.value = '';
+    manualTypeSheet.value = '';
+    manualTypeForm.hidden = true;
+    addContentTypeBtn.textContent = '+ Register a content type';
+    await refreshAfterTypeChange();
+});
+
+// One place that talks to /custom-types, shared by the manual form and
+// the unrecognized-sheet shortcut.
+async function saveCustomType(definition) {
+    try {
+        const response = await fetch('/custom-types', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(definition)
+        });
+        const result = await response.json();
+        return { ok: response.ok, message: result.message };
+    } catch (error) {
+        return { ok: false, message: 'Network error while saving.' };
+    }
+}
+
+// After adding or removing a type: re-inspect if a workbook is loaded (so
+// sheet pickers and the unrecognized list both update), otherwise just
+// rebuild the buttons.
+async function refreshAfterTypeChange() {
+    if (inputFile.files.length) {
+        await inspectWorkbook();
+    } else {
+        await loadContentTypes();
+    }
+}
+
 // --- Custom imports (sheets that match no known type) ---
 
 function renderUnmatchedSheets(sheets) {
@@ -172,6 +268,8 @@ function buildCustomTypeForm(sheet) {
     endpointInput.type = 'text';
     endpointInput.placeholder = 'Schema slug on the site';
     endpointInput.setAttribute('aria-label', `Schema slug for the ${sheet.name} import`);
+    // Autocompletes from the real schemas found by Test connection.
+    endpointInput.setAttribute('list', 'schemaOptions');
 
     const saveBtn = document.createElement('button');
     saveBtn.type = 'button';
@@ -192,35 +290,27 @@ function buildCustomTypeForm(sheet) {
 
         saveBtn.disabled = true;
         saveBtn.textContent = 'Saving…';
-        try {
-            const response = await fetch('/custom-types', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    label: labelInput.value.trim(),
-                    endpoint: endpointInput.value.trim(),
-                    sheetName: sheet.name,
-                    columns: sheet.columns
-                })
-            });
-            const result = await response.json();
-            if (!response.ok) {
-                error.textContent = result.message;
-                error.hidden = false;
-                saveBtn.disabled = false;
-                saveBtn.textContent = 'Add import';
-                return;
-            }
-            resultsField.innerText = result.message;
-            // Re-inspect so the new type appears as a button and this
-            // sheet drops out of the unmatched list.
-            await inspectWorkbook();
-        } catch (err) {
-            error.textContent = 'Network error while saving.';
+
+        // Columns are pinned here: they were just read from the sheet.
+        const result = await saveCustomType({
+            label: labelInput.value.trim(),
+            endpoint: endpointInput.value.trim(),
+            sheetName: sheet.name,
+            columns: sheet.columns
+        });
+
+        if (!result.ok) {
+            error.textContent = result.message;
             error.hidden = false;
             saveBtn.disabled = false;
             saveBtn.textContent = 'Add import';
+            return;
         }
+
+        resultsField.innerText = result.message;
+        // Re-inspect so the new type appears as a button and this sheet
+        // drops out of the unrecognized list.
+        await inspectWorkbook();
     });
 
     form.append(labelInput, endpointInput, saveBtn, error);
@@ -251,11 +341,7 @@ function renderSavedCustomTypes(customTypes) {
                 const response = await fetch(`/custom-types/${t.type}`, { method: 'DELETE' });
                 const result = await response.json();
                 resultsField.innerText = result.message;
-                if (inputFile.files.length) {
-                    await inspectWorkbook();
-                } else {
-                    await loadContentTypes();
-                }
+                await refreshAfterTypeChange();
             } catch (error) {
                 removeBtn.disabled = false;
                 resultsField.innerText = 'Network error while removing the custom import.';
@@ -338,6 +424,64 @@ function renderConnectionReport(report) {
         connectionCheckResult.appendChild(
             checkRow(rd.ok, label, rd.ok ? `${rd.count} found` : rd.message)
         );
+    });
+
+    renderSchemaList(report.schemas || []);
+}
+
+// Every schema that exists on the site, in a collapsed <details> so it
+// doesn't bury the pass/fail summary above it. Also feeds the schema-slug
+// autocomplete, which is the main reason to want this list.
+function renderSchemaList(schemas) {
+    siteSchemas = schemas.map(s => s.name);
+    updateSchemaOptions();
+
+    if (!schemas.length) return;
+
+    const details = document.createElement('details');
+    details.className = 'schema-list';
+
+    const summary = document.createElement('summary');
+    const unusedCount = schemas.filter(s => !s.used).length;
+    summary.textContent = `Schemas on this site (${schemas.length})`;
+    if (unusedCount) summary.textContent += ` — ${unusedCount} not wired up`;
+    details.appendChild(summary);
+
+    schemas.forEach(s => {
+        const row = document.createElement('div');
+        row.className = 'schema-row' + (s.used ? ' schema-used' : '');
+
+        const slug = document.createElement('code');
+        slug.textContent = s.name;
+        row.appendChild(slug);
+
+        if (s.used) {
+            const tag = document.createElement('span');
+            tag.className = 'schema-tag';
+            tag.textContent = 'in use';
+            row.appendChild(tag);
+        }
+        details.appendChild(row);
+    });
+
+    connectionCheckResult.appendChild(details);
+}
+
+// Fills the shared <datalist> that every schema-slug input points at, so
+// after a Test connection you pick a real slug instead of typing one from
+// memory. Created once, on demand.
+function updateSchemaOptions() {
+    let list = document.getElementById('schemaOptions');
+    if (!list) {
+        list = document.createElement('datalist');
+        list.id = 'schemaOptions';
+        document.body.appendChild(list);
+    }
+    list.innerHTML = '';
+    siteSchemas.forEach(name => {
+        const option = document.createElement('option');
+        option.value = name;
+        list.appendChild(option);
     });
 }
 

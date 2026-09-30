@@ -96,6 +96,10 @@ form:
    resolution a real upload does, just run for all 9 up front instead of one
    at a time, mid-upload).
 3. Whether the PermissionSet and Categories reference lists load, with a count.
+4. The full list of schemas on the site, each flagged with whether a content
+   type in this tool already points at it. The unflagged ones are the useful
+   part — they're the candidates when registering a new content type, so the
+   same list also feeds an autocomplete on every schema-slug field.
 
 It's read-only end to end — it never creates, updates, or publishes anything,
 so it's safe to click at any time. Covered by
@@ -182,10 +186,25 @@ consistent with every other soft-fail already in this file. Covered in
 (`fetchContentNameLookup`/`fetchAssetNameLookup`), `mapPayload.test.js`,
 and `processUpload.test.js` (`content & asset reference lookups`).
 
-**Confidence:** the Reference/Asset array *shape* is confirmed from
-Squidex's docs. The one thing that can't be verified without a real site:
-whether `department`/`parentdepartment`/`staffdirectory` are stored under
-`en` or `iv` partitioning, and which field Department/Staff content
+**Partitioning — now settled by a live run, not inference.** A real Staff
+import returned `department: Not a known language.` when `department` was
+sent as `{iv: [...]}`. That field is **language-partitioned (`en`)**, as
+the original code had it before reference resolution was added. It's back
+to `en`, with a regression test. `departments.parentdepartment` and
+`staffdirectory` genuinely are `iv` — one does not imply the other, so
+don't "tidy" them to match.
+
+**Unmatched categories are dropped, not sent.** The same live run returned
+`Categories: One or more Categories do not exist in App` and rejected
+entire rows because a sheet value ("Fire Marshal" — a valid *permission
+set* on that site, but not a category) was sent with an empty id. Rows now
+upload without the bad category, and `processUpload` returns
+`missingCategories` so the dashboard names exactly what was skipped
+instead of changing the data silently.
+
+**Still unverified:** the Reference/Asset array *shape* is confirmed from
+Squidex's docs, but not which field Department/Staff content stores its
+display name under, and which field Department/Staff content
 actually stores its display name under — this assumes `department` (own
 name) is `en`, matching how `departments.mapPayload` already sends it, and
 that staff records store `firstname`/`lastname` the same way `staff.mapPayload`
@@ -218,9 +237,19 @@ upload time, where the user has deliberately chosen one type.
 
 ## Custom content types
 
-Defined from the GUI, not by editing code: pick a sheet the tool doesn't
-recognize, give it a display name and the schema slug it should upload to,
-and every column becomes a plain text field (`{iv: value}` — the same shape
+Defined from the GUI, not by editing code. Two ways in:
+
+- **Register a content type** — always available in the sidebar, with or
+  without a workbook loaded. Give it a display name, the schema slug, and
+  the sheet name to read. Columns aren't asked for, because with no
+  workbook there are no headers to read; they're discovered from each row
+  at upload time.
+- **Unrecognized sheets** in a loaded workbook get a one-click shortcut
+  with their columns already filled in. Columns registered this way are
+  *pinned*, so a column added to that sheet later doesn't silently start
+  uploading.
+
+Either way every column becomes a plain text field (`{iv: value}` — the same shape
 `processUpload` already uses for unrecognized columns on a built-in type,
 so this is consistent with existing behavior rather than a new convention).
 Blank cells are skipped; `PermissionSet`, `Categories`, `Publish`, `Tags`,

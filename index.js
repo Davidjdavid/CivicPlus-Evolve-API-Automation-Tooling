@@ -53,17 +53,44 @@ const resolveId = (value, lookup, label = 'value') => {
     if (match) return match;
 
     if (GUID_REGEX.test(name)) return name; // already an id, use as-is
-    console.warn(`No ${label} match for "${name}" — id left empty.`);
+    console.warn(`No ${label} match for "${name}" on this site.`);
     return undefined;
 };
 
 // Categories can be a comma-separated list of names; map each to { id, name }.
-const parseCategories = (categories, lookup) => categories
-    ? String(categories).split(',')
+//
+// A name with no match on the site is DROPPED, not sent with an empty id.
+// Sending one makes the API reject the whole row ("Categories: One or more
+// Categories do not exist in App"), losing every other field in it — so a
+// row with one bad category now uploads without that category instead of
+// not uploading at all. collectMissingCategories() below reports what was
+// dropped, so this is visible rather than silent.
+const parseCategories = (categories, lookup) => {
+    if (!categories) return undefined;
+    const resolved = String(categories).split(',')
         .map(cat => cat.trim())
         .filter(Boolean)
         .map(name => ({ id: resolveId(name, lookup, 'category'), name }))
-    : undefined;
+        .filter(cat => cat.id);
+    return resolved.length ? resolved : undefined;
+};
+
+// Every category name in the sheet that doesn't exist on the site, so the
+// upload result can name them instead of leaving the user to infer it
+// from a silently missing category.
+function collectMissingCategories(rows, lookup) {
+    const missing = new Set();
+    for (const row of rows) {
+        if (!row.Categories) continue;
+        String(row.Categories).split(',')
+            .map(c => c.trim())
+            .filter(Boolean)
+            .forEach(name => {
+                if (!lookup?.get(name.toLowerCase())) missing.add(name);
+            });
+    }
+    return [...missing];
+}
 
 // Turns a (possibly comma-separated) string of NAMES into an array of
 // resolved content/asset ids — for Squidex Reference and Asset fields,
@@ -438,13 +465,19 @@ const uploadConfig = {
                 firstname: { en: entry.FirstName },
                 lastname: { en: entry.LastName },
                 title: { en: entry.Title },
-                // Was hardcoded to []. Department is a Squidex Reference field
-                // (an array of the target Department content item's id) — the
-                // sheet gives a name, so this resolves it against existing
-                // Department content, loaded once in processUpload before the
-                // batch loop. A name that isn't found is skipped with a
-                // warning rather than failing the row.
-                department: { iv: resolveReferenceIds(entry.Department, lookups.departments, 'department') },
+                // Reference field (an array of the target Department item's
+                // id) — the sheet gives a name, resolved against existing
+                // Department content loaded once before the batch loop. A
+                // name that isn't found is skipped with a warning rather
+                // than failing the row.
+                //
+                // Partition is `en`, NOT `iv`. A live run against a real
+                // site returned "department: Not a known language" for
+                // `iv` — this field is language-partitioned, matching the
+                // original code here before reference resolution was added.
+                // (departments.parentdepartment/staffdirectory below really
+                // are `iv`; don't assume one implies the other.)
+                department: { en: resolveReferenceIds(entry.Department, lookups.departments, 'department') },
                 phonenumber: { en: entry.PhoneNumber },
                 faxnumber: { en: entry.FaxNumber },
                 emailaddress: { en: entry.EmailAddress },
@@ -694,11 +727,24 @@ function saveCustomTypes(customTypes) {
 // Blank cells are skipped entirely (not sent as empty strings), matching
 // the dynamic-injection rule already in processUpload.
 // PermissionSet/Categories/Publish are handled like every other type.
+//
+// An EMPTY `columns` list means "discover them from each row" — that's
+// how a type registered by hand works, since there's no workbook on hand
+// to read headers from at registration time. Passing an explicit list
+// (which the unrecognized-sheet shortcut does, having just read them)
+// pins the fields instead, so a stray column added to the sheet later
+// doesn't silently start uploading.
+const SHARED_COLUMNS = ['PermissionSet', 'Categories', 'Publish', 'Tags', 'Name'];
+
 function buildCustomMapPayload(columns) {
-    const dataColumns = columns.filter(c => !['PermissionSet', 'Categories', 'Publish', 'Tags', 'Name'].includes(c));
+    const pinned = (columns || []).filter(c => !SHARED_COLUMNS.includes(c));
     return (entry, lookups) => {
+        const sourceColumns = pinned.length
+            ? pinned
+            : Object.keys(entry).filter(c => !SHARED_COLUMNS.includes(c));
+
         const data = {};
-        for (const column of dataColumns) {
+        for (const column of sourceColumns) {
             const value = entry[column];
             if (value !== undefined && value !== '') data[column] = { iv: value };
         }
@@ -718,16 +764,22 @@ function buildCustomMapPayload(columns) {
 // name-match failure produce a clear error instead of silently grabbing
 // whatever sheet happens to sit at some index.
 function buildCustomTypeConfig(definition) {
+    const columns = definition.columns || [];
     return {
         sheetIndex: -1,
         sheetName: definition.sheetName,
         label: definition.label,
         description: definition.description || `Custom import from the "${definition.sheetName}" sheet`,
         endpoint: definition.endpoint,
-        standardColumns: definition.columns || [],
+        // The shared columns must be listed as "standard" even though the
+        // custom mapper handles them, or processUpload's dynamic
+        // injection (which adds any column NOT in standardColumns) would
+        // re-add PermissionSet/Categories/Publish as plain data fields on
+        // top of the proper handling.
+        standardColumns: [...new Set([...columns, ...SHARED_COLUMNS])],
         isCustom: true,
-        columns: definition.columns || [],
-        mapPayload: buildCustomMapPayload(definition.columns || [])
+        columns,
+        mapPayload: buildCustomMapPayload(columns)
     };
 }
 
@@ -902,17 +954,24 @@ app.post('/upload/:type', (req, res) => {
         try {
             // Parse the workbook straight from the uploaded buffer (no disk read).
             const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-            const { successes, failures } = await processUpload(type, url, apiKey, workbook, 10, sheetOverride);
+            const { successes, failures, missingCategories } = await processUpload(type, url, apiKey, workbook, 10, sheetOverride);
+
+            // Rows still upload when a category doesn't exist on the site
+            // (the category is dropped, not sent), but that's a silent data
+            // change unless it's said out loud.
+            const categoryNote = missingCategories && missingCategories.length
+                ? ` Note: these categories don't exist on this site and were skipped: ${missingCategories.join(', ')}.`
+                : '';
 
             if (failures.length === 0) {
-                return res.json({ message: `Upload complete. Processed ${successes.length} ${type}.` });
+                return res.json({ message: `Upload complete. Processed ${successes.length} ${type}.${categoryNote}` });
             }
 
             // Partial (or total) failure: report counts AND the actual API errors
             // so you can see exactly which field each content type is rejecting,
             // instead of a silent "Processed 0".
             return res.status(207).json({
-                message: `Processed ${successes.length} of ${successes.length + failures.length} ${type}. ${failures.length} failed.`,
+                message: `Processed ${successes.length} of ${successes.length + failures.length} ${type}. ${failures.length} failed.${categoryNote}`,
                 errors: failures.slice(0, 10).map(f => `Row ${f.row}: ${f.error}`)
             });
         } catch (error) {
@@ -1199,7 +1258,7 @@ async function checkConnection(siteURL, accessToken) {
     // Can't meaningfully check content types or reference data without a
     // working connection, so stop here and let the caller show just that.
     if (!connection.ok) {
-        return { connection, contentTypes: [], referenceData: [] };
+        return { connection, contentTypes: [], referenceData: [], schemas: [] };
     }
 
     const contentTypes = Object.entries(uploadConfig).map(([type, config]) => {
@@ -1213,6 +1272,16 @@ async function checkConnection(siteURL, accessToken) {
         };
     });
 
+    // Every schema on the site, flagged by whether a content type in this
+    // tool already points at it. The unclaimed ones are the useful part:
+    // they're the candidates when registering a new content type, so the
+    // GUI offers them as autocomplete on the schema slug field.
+    const claimed = new Set(contentTypes.filter(ct => ct.ok).map(ct => ct.resolvedEndpoint));
+    const schemas = (connection.schemaNames || []).map(name => ({
+        name,
+        used: claimed.has(name)
+    }));
+
     const referenceData = await Promise.all(
         ['permissionSet', 'categories'].map(async (endpoint) => {
             try {
@@ -1224,7 +1293,7 @@ async function checkConnection(siteURL, accessToken) {
         })
     );
 
-    return { connection, contentTypes, referenceData };
+    return { connection, contentTypes, referenceData, schemas };
 }
 
 app.post('/check-connection', async (req, res) => {
@@ -1324,8 +1393,11 @@ app.post('/custom-types', (req, res) => {
     if (!label || !endpoint || !sheetName) {
         return res.status(400).json({ message: 'A label, schema slug, and sheet name are all required.' });
     }
-    if (!Array.isArray(columns) || columns.length === 0) {
-        return res.status(400).json({ message: 'At least one column is required.' });
+    // columns is optional: an empty list means "use whatever columns each
+    // row has", which is how a hand-registered type works (no workbook on
+    // hand to read headers from). It must still be an ARRAY if sent.
+    if (columns !== undefined && !Array.isArray(columns)) {
+        return res.status(400).json({ message: 'Columns must be a list.' });
     }
 
     const key = `custom_${normalizeSlug(label)}`;
@@ -1340,7 +1412,7 @@ app.post('/custom-types', (req, res) => {
 
     try {
         const customTypes = loadCustomTypes();
-        customTypes[key] = { label, endpoint, sheetName, columns, description: req.body.description };
+        customTypes[key] = { label, endpoint, sheetName, columns: columns || [], description: req.body.description };
         saveCustomTypes(customTypes);
         registerCustomTypes(customTypes);
 
@@ -1440,6 +1512,14 @@ async function processUpload(type, siteURL, accessToken, workbook, batchSize = 1
     const lookups = {};
     for (const refEndpoint of (config.referenceData || DEFAULT_REFERENCE_DATA)) {
         lookups[refEndpoint] = await fetchReferenceData(siteURL, refEndpoint, accessToken);
+    }
+
+    // Checked up front so the result can name every category that doesn't
+    // exist on the site, rather than the user noticing later that content
+    // uploaded without its categories.
+    const missingCategories = collectMissingCategories(excelData, lookups.categories);
+    if (missingCategories.length) {
+        console.warn(`[${type}] ${missingCategories.length} category name(s) not found on ${siteURL} and will be skipped: ${missingCategories.join(', ')}`);
     }
 
     // --- Content & asset reference lookups ---
@@ -1558,7 +1638,7 @@ async function processUpload(type, siteURL, accessToken, workbook, batchSize = 1
         }
     }
 
-    return { successes, failures };
+    return { successes, failures, missingCategories };
 }
 
 if (require.main === module) {

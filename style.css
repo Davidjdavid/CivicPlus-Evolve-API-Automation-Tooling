@@ -254,6 +254,55 @@ h2 {
     font-size: 0.76rem;
 }
 
+.schema-list {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+}
+
+.schema-list summary {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-soft);
+    cursor: pointer;
+    padding: 2px 0;
+}
+
+.schema-list summary:hover {
+    color: var(--signal);
+}
+
+.schema-row {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    padding: 3px 0 3px 10px;
+}
+
+.schema-row code {
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    color: var(--ink);
+    word-break: break-all;
+}
+
+.schema-used code {
+    color: var(--ink-soft);
+}
+
+.schema-tag {
+    flex: 0 0 auto;
+    font-size: 0.64rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--confirm);
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    padding: 0 6px;
+}
+
 /* --------------------------- Sheet pickers & custom imports --------------------------- */
 
 .type-row {
@@ -297,11 +346,100 @@ h2 {
     border-top: 1px solid var(--line);
 }
 
+#customTypesSection {
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+}
+
+#customTypesSection h2 {
+    font-size: 0.88rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.sub-h {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-soft);
+    margin: 0 0 8px;
+}
+
+.add-type-btn {
+    all: unset;
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    padding: 9px 12px;
+    text-align: center;
+    background: var(--surface);
+    color: var(--ink);
+    border: 1px dashed var(--line);
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.add-type-btn:hover {
+    border-color: var(--signal);
+    color: var(--signal);
+}
+
+.add-type-btn:focus-visible {
+    outline: 2px solid var(--signal);
+    outline-offset: 2px;
+}
+
+#manualTypeForm {
+    margin-top: 12px;
+    padding: 12px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+}
+
+#manualTypeForm label {
+    margin-top: 8px;
+    margin-bottom: 4px;
+}
+
+.form-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.cancel-btn {
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 7px 14px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--ink-soft);
+    cursor: pointer;
+}
+
+.cancel-btn:hover {
+    border-color: var(--ink-soft);
+    color: var(--ink);
+}
+
 #customImportsPanel h2,
 #savedCustomTypes h2 {
     font-size: 0.88rem;
     font-weight: 600;
     margin-bottom: 6px;
+}
+
+#customTypesSection #customImportsPanel,
+#customTypesSection #savedCustomTypes {
+    margin-top: 16px;
+    padding-top: 14px;
 }
 
 .panel-hint {
